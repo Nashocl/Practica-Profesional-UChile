@@ -1,0 +1,1206 @@
+/* Práctica CMM: simulación del Epileptor 2D (Proix et al. 2014, ec. 8) y laboratorios interactivos */
+(() => {
+'use strict';
+
+const TAU0 = 2857, I1 = 3.1, X0C = 2.91;
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = {
+  ink: css('--ink'), muted: css('--muted'), line: css('--line'), grid: css('--line-soft'),
+  accent: css('--accent'), sage: css('--sage'), ochre: css('--ochre'), plate: css('--plate'),
+};
+const ACC = [180, 80, 44], SAGE = [102, 117, 75], CREAM = [255, 253, 249];
+const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const mix = (a, b, u) => `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * u)).join(',')})`;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const R = String.raw;
+const KATEX_OPTS = { delimiters: [{ left: '$$', right: '$$', display: true }, { left: R`\(`, right: R`\)`, display: false }], throwOnError: false };
+const tex = el => { if (window.renderMathInElement && el) renderMathInElement(el, KATEX_OPTS); };
+const MATHFONT = 'italic 15px KaTeX_Math, "Times New Roman", serif';
+
+/* ================= modelo ================= */
+const sig = u => 1 / (1 + Math.exp(-u));
+const hEq8 = (x, x0) => x0 + 3 * sig((x + 0.5) / 0.1);          // Práctica_OFICIAL / ecuación (8)
+const hNb = (x, x0) => x0 - 3 + 3 * sig((x - 0.5) / 0.1);       // variante usada en el experimento base del grafo
+const cubic = x => -x * x * x - 2 * x * x + 1 + I1;             // nullclina de x
+
+// RK4 para N regiones; nbrs[i] = índices j que entran en la ecuación de i
+function simulate({ x0, nbrs, K, T, xi, zi, h = hEq8, dt = 0.1, every = 10 }) {
+  const N = x0.length, steps = Math.round(T / dt), ns = Math.floor(steps / every) + 1;
+  let s = new Float64Array(2 * N);
+  const k1 = new Float64Array(2 * N), k2 = new Float64Array(2 * N), k3 = new Float64Array(2 * N),
+    k4 = new Float64Array(2 * N), tmp = new Float64Array(2 * N);
+  for (let i = 0; i < N; i++) { s[i] = xi[i]; s[N + i] = zi[i]; }
+  const f = (u, o) => {
+    for (let i = 0; i < N; i++) {
+      const x = u[i], nb = nbrs[i];
+      let c = 0;
+      for (let q = 0; q < nb.length; q++) c += u[nb[q]] - x;
+      o[i] = -x * x * x - 2 * x * x + 1 - u[N + i] + I1;
+      o[N + i] = (h(x, x0[i]) - u[N + i] - K * c) / TAU0;
+    }
+  };
+  const t = new Float32Array(ns), xs = [], zs = [];
+  for (let i = 0; i < N; i++) { xs.push(new Float32Array(ns)); zs.push(new Float32Array(ns)); }
+  const rec = k => { for (let i = 0; i < N; i++) { xs[i][k] = s[i]; zs[i][k] = s[N + i]; } };
+  rec(0);
+  const M = 2 * N;
+  for (let n = 1; n <= steps; n++) {
+    f(s, k1);
+    for (let m = 0; m < M; m++) tmp[m] = s[m] + 0.5 * dt * k1[m];
+    f(tmp, k2);
+    for (let m = 0; m < M; m++) tmp[m] = s[m] + 0.5 * dt * k2[m];
+    f(tmp, k3);
+    for (let m = 0; m < M; m++) tmp[m] = s[m] + dt * k3[m];
+    f(tmp, k4);
+    for (let m = 0; m < M; m++) s[m] += dt / 6 * (k1[m] + 2 * k2[m] + 2 * k3[m] + k4[m]);
+    if (n % every === 0) { const k = n / every; t[k] = n * dt; rec(k); }
+  }
+  return { t, x: xs, z: zs, n: ns, T };
+}
+
+function onsets(t, x, th = -0.5, from = 0) {
+  const r = [];
+  for (let k = Math.max(1, from); k < x.length; k++) if (x[k - 1] <= th && x[k] > th) r.push(t[k]);
+  return r;
+}
+const meanDiff = a => a.length > 1 ? (a[a.length - 1] - a[0]) / (a.length - 1) : NaN;
+
+// puntos fijos de N = 1 y su estabilidad (barrido de signo + bisección)
+function fixedPoints(x0) {
+  const g = x => cubic(x) - hEq8(x, x0), out = [];
+  const n = 6000;
+  let xa = -3, fa = g(xa);
+  for (let k = 1; k <= n; k++) {
+    const xb = -3 + 6 * k / n, fb = g(xb);
+    if (fa * fb < 0) {
+      let lo = xa, hi = xb, flo = fa;
+      for (let it = 0; it < 60; it++) { const mid = (lo + hi) / 2, fm = g(mid); if (flo * fm <= 0) hi = mid; else { lo = mid; flo = fm; } }
+      const x = (lo + hi) / 2, s = sig((x + 0.5) / 0.1), dh = 3 * s * (1 - s) / 0.1;
+      const a = -3 * x * x - 4 * x, tr = a - 1 / TAU0, det = (-a + dh) / TAU0, disc = tr * tr - 4 * det;
+      const re = disc >= 0 ? (tr + Math.sqrt(disc)) / 2 : tr / 2;
+      out.push({ x, z: hEq8(x, x0), re, stable: re < 0 });
+    }
+    xa = xb; fa = fb;
+  }
+  return out;
+}
+
+/* ================= utilidades de canvas ================= */
+function fit(c) {
+  const d = Math.min(window.devicePixelRatio || 1, 2);
+  if (!c._h) c._h = +c.getAttribute('height') || 200;
+  const w = c.clientWidth, h = c._h;
+  if (c._w !== w || c._d !== d) {
+    c.width = Math.round(w * d); c.height = Math.round(h * d); c.style.height = h + 'px'; c._w = w; c._d = d;
+  }
+  const g = c.getContext('2d');
+  g.setTransform(d, 0, 0, d, 0, 0);
+  return { g, w, h };
+}
+function ticks([a, b], n = 5) {
+  const raw = (b - a) / n, p = Math.pow(10, Math.floor(Math.log10(raw))), e = raw / p;
+  const st = (e < 1.5 ? 1 : e < 3 ? 2 : e < 7 ? 5 : 10) * p, out = [];
+  for (let v = Math.ceil(a / st) * st; v <= b + 1e-9; v += st) out.push(Math.abs(v) < 1e-9 ? 0 : v);
+  return out;
+}
+const fmtT = v => Math.abs(v) >= 1000 ? (v / 1000) + 'k' : String(+v.toFixed(2));
+function frame(g, w, h, xr, yr, o = {}) {
+  const m = { l: o.l ?? 36, r: 10, t: 8, b: 22 };
+  const X = v => m.l + (v - xr[0]) / (xr[1] - xr[0]) * (w - m.l - m.r);
+  const Y = v => h - m.b - (v - yr[0]) / (yr[1] - yr[0]) * (h - m.t - m.b);
+  g.clearRect(0, 0, w, h);
+  g.font = '11px "JetBrains Mono", ui-monospace, monospace';
+  g.lineWidth = 1; g.setLineDash([]);
+  g.textAlign = 'right';
+  for (const v of ticks(yr, o.ny ?? 4)) {
+    g.strokeStyle = C.grid; g.beginPath(); g.moveTo(m.l, Y(v)); g.lineTo(w - m.r, Y(v)); g.stroke();
+    g.fillStyle = C.muted; g.fillText(fmtT(v), m.l - 6, Y(v) + 3.5);
+  }
+  g.textAlign = 'center';
+  for (const v of ticks(xr, o.nx ?? 6)) g.fillText(fmtT(v), X(v), h - 6);
+  if (o.xl) { g.save(); g.font = MATHFONT; g.textAlign = 'right'; g.fillText(o.xl, w - m.r, h - 6 - 14); g.restore(); }
+  return { X, Y, m };
+}
+function path(g, X, Y, xs, ys, a = 0, b = xs.length) {
+  g.beginPath();
+  for (let k = a; k < b; k++) { const px = X(xs[k]), py = Y(ys[k]); k === a ? g.moveTo(px, py) : g.lineTo(px, py); }
+}
+function stroke(g, color, width = 1.5, dash = []) { g.strokeStyle = color; g.lineWidth = width; g.setLineDash(dash); g.lineJoin = 'round'; g.stroke(); g.setLineDash([]); }
+function dot(g, x, y, r, fill, ring) {
+  g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fillStyle = fill; g.fill();
+  if (ring) { g.strokeStyle = ring; g.lineWidth = 2; g.stroke(); }
+}
+function tween(ms, fn, done) {
+  if (reduced) { fn(1); done && done(); return () => {}; }
+  let id, t0;
+  const step = now => {
+    t0 ??= now;
+    const u = clamp((now - t0) / ms, 0, 1);
+    fn(1 - Math.pow(1 - u, 3));
+    if (u < 1) id = requestAnimationFrame(step); else done && done();
+  };
+  id = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(id);
+}
+function watchVisible(el, cb) {
+  new IntersectionObserver(es => es.forEach(e => cb(e.isIntersecting)), { rootMargin: '80px' }).observe(el);
+}
+function bindRange(input, out, dec, fn) {
+  const upd = () => {
+    const v = +input.value;
+    out.textContent = v.toFixed(dec);
+    input.style.setProperty('--fill', ((v - input.min) / (input.max - input.min) * 100) + '%');
+  };
+  input.addEventListener('input', () => { upd(); fn(); });
+  upd();
+  return upd;
+}
+const rafThrottle = fn => { let q = false; return () => { if (q) return; q = true; requestAnimationFrame(() => { q = false; fn(); }); }; };
+
+/* ================= fondo: red de regiones que se reclutan ================= */
+function background() {
+  const c = $('#bgNet'), g = c.getContext('2d');
+  const LINK = 175;
+  let w = 0, h = 0, nodes = [], last = 0, nextFire = 1200;
+  function size() {
+    const d = Math.min(window.devicePixelRatio || 1, 1.5);
+    w = innerWidth; h = innerHeight;
+    c.width = Math.round(w * d); c.height = Math.round(h * d);
+    g.setTransform(d, 0, 0, d, 0, 0);
+    const n = clamp(Math.round(w * h / 36000), 16, 46), r = mulberry32(5);
+    nodes = Array.from({ length: n }, (_, i) => {
+      const a = r() * 6.2832, v = 5 + 9 * r();
+      return { x: r() * w, y: r() * h, vx: v * Math.cos(a), vy: v * Math.sin(a), epi: i % 5 === 0, act: 0, wait: -1, gen: 0 };
+    });
+  }
+  // una región epileptogénica dispara y arrastra a sus vecinas con retardo, como en el grafo
+  function fire(p, gen) {
+    p.act = 1; p.gen = gen;
+    if (gen >= 2) return;
+    for (const q of nodes) if (q !== p && q.act < 0.2 && q.wait < 0 && Math.hypot(q.x - p.x, q.y - p.y) < LINK) { q.wait = 380 + 500 * Math.random(); q.gen = gen + 1; }
+  }
+  function draw(dt) {
+    g.clearRect(0, 0, w, h);
+    for (const p of nodes) {
+      p.x += p.vx * dt / 1000; p.y += p.vy * dt / 1000;
+      if (p.x < -20) p.x = w + 20; else if (p.x > w + 20) p.x = -20;
+      if (p.y < -20) p.y = h + 20; else if (p.y > h + 20) p.y = -20;
+      if (p.wait >= 0) { p.wait -= dt; if (p.wait < 0) fire(p, p.gen); }
+      p.act = Math.max(0, p.act - dt / 2600);
+    }
+    g.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i++) for (let k = i + 1; k < nodes.length; k++) {
+      const a = nodes[i], b = nodes[k], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d > LINK) continue;
+      const hot = Math.min(a.act, b.act) > 0.05 ? Math.max(a.act, b.act) : 0;
+      g.strokeStyle = hot ? rgba(ACC, (1 - d / LINK) * (0.12 + 0.3 * hot)) : rgba([118, 104, 90], (1 - d / LINK) * 0.13);
+      g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    }
+    for (const p of nodes) {
+      if (p.act > 0.02) {
+        g.beginPath(); g.arc(p.x, p.y, 4 + 26 * (1 - p.act), 0, 6.2832);
+        g.strokeStyle = rgba(ACC, 0.3 * p.act); g.lineWidth = 1.5; g.stroke();
+      }
+      dot(g, p.x, p.y, p.epi ? 3 : 2.2, p.act > 0.02 ? rgba(ACC, 0.25 + 0.45 * p.act) : rgba(p.epi ? ACC : SAGE, p.epi ? 0.32 : 0.28));
+    }
+  }
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (document.hidden || now - last < 33) return;      // ~30 fps bastan para un fondo
+    const dt = Math.min(80, now - last || 33); last = now;
+    nextFire -= dt;
+    if (nextFire < 0) {
+      const epi = nodes.filter(p => p.epi && p.x > 0 && p.x < w && p.y > 0 && p.y < h);
+      if (epi.length) fire(epi[Math.floor(Math.random() * epi.length)], 0);
+      nextFire = 2600 + 2200 * Math.random();
+    }
+    draw(dt);
+  };
+  size();
+  let rt;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { size(); if (reduced) draw(0); }, 150); });
+  if (reduced) draw(0); else requestAnimationFrame(loop);
+}
+
+/* ================= portada: cerebro 3D interactivo (Three.js) ================= */
+function brain3d() {
+  const canvas = $('#brain3d');
+  let onResize = () => {};
+  import('./vendor/three/three.module.js')
+    .catch(() => import('https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js'))
+    .then(T => { onResize = buildBrain(T, canvas); })
+    .catch(() => { canvas.parentElement.style.display = 'none'; });
+  return () => onResize();
+}
+
+function buildBrain(T, canvas) {
+  const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(32, 1, 0.1, 20);
+  camera.position.set(0, 0, 3.45);
+  // iluminación de estudio: luz principal cálida, relleno rosado y contraluz para marcar el relieve
+  scene.add(new T.HemisphereLight(0xfff3ee, 0x6b2a30, 0.4));
+  const key = new T.DirectionalLight(0xfff6ee, 1.4);
+  key.position.set(-2.2, 3.2, 3.6);
+  const rim = new T.DirectionalLight(0xffd9d0, 0.35);
+  rim.position.set(3, 1.2, -3);
+  const fill = new T.DirectionalLight(0xffe4e6, 0.12);
+  fill.position.set(2.5, -1.5, 2.5);
+  scene.add(key, rim, fill);
+
+  const brain = new T.Group();
+  scene.add(brain);
+  // ---- respaldo: cerebro generado por código, por si el modelo no se puede cargar
+  function procedural() {
+  const tmp = new T.Color();
+  const SULCUS = new T.Color('#4a0f1c'), GYRUS = new T.Color('#e07585'), CREST = new T.Color('#f3a6ae');
+  // superficie húmeda: poca rugosidad y una capa de barniz que da los brillos de la referencia
+  const cortex = new T.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.42, metalness: 0, clearcoat: 0.55, clearcoatRoughness: 0.3 });
+
+  // ruido de gradiente 3D (Perlin); sus cruces por cero, deformados, dibujan el laberinto de surcos
+  const fade = t => t * t * t * (t * (t * 6 - 15) + 10);
+  const grad = (i, j, k, x, y, z) => {
+    let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ Math.imul(k, 1274126177);
+    h = Math.imul(h ^ (h >>> 13), 1103515245); h = (h ^ (h >>> 16)) & 15;
+    const u = h < 8 ? x : y, v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+    return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+  };
+  function noise(x, y, z) {
+    const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), fx = x - i, fy = y - j, fz = z - k, u = fade(fx), v = fade(fy), w = fade(fz);
+    const L = (a, b, t) => a + (b - a) * t;
+    return L(L(L(grad(i, j, k, fx, fy, fz), grad(i + 1, j, k, fx - 1, fy, fz), u), L(grad(i, j + 1, k, fx, fy - 1, fz), grad(i + 1, j + 1, k, fx - 1, fy - 1, fz), u), v),
+             L(L(grad(i, j, k + 1, fx, fy, fz - 1), grad(i + 1, j, k + 1, fx - 1, fy, fz - 1), u), L(grad(i, j + 1, k + 1, fx, fy - 1, fz - 1), grad(i + 1, j + 1, k + 1, fx - 1, fy - 1, fz - 1), u), v), w);
+  }
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+  function hemisphere(seed) {
+    const WS = 288, HS = 208, geo = new T.SphereGeometry(1, WS, HS), pos = geo.attributes.position;
+    const col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const ux = pos.getX(i), uy = pos.getY(i), uz = pos.getZ(i);
+      let rx = ux < 0 ? 0.13 : 0.45, ry = uy < 0 ? 0.35 : 0.50;
+      const rz = uz < 0 ? 0.80 : 0.76;
+      if (uz > 0) { rx *= 1 - 0.20 * uz; ry *= 1 - 0.12 * uz; } else { ry *= 1 + 0.06 * uz; }
+      // lóbulo temporal: abultamiento lateral e inferior, hacia adelante
+      const lobe = ux > 0 ? Math.exp(-((uy + 0.55) ** 2 / 0.07 + (uz - 0.22) ** 2 / 0.22)) : 0;
+      const bx = 0.155 + ux * rx + 0.05 * lobe, by = uy * ry - 0.11 * lobe, bz = uz * rz + 0.03 * lobe;
+      let nx = ux / rx, ny = uy / ry, nz = uz / rz;
+      const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
+
+      // surcos: dos escalas de pliegue con deformación de dominio
+      const px = bx + seed, py = by + seed * 0.37, pz = bz - seed * 0.61;
+      const wx = 0.13 * noise(px * 2.6, py * 2.6, pz * 2.6), wy = 0.13 * noise(px * 2.6 + 31, py * 2.6 + 17, pz * 2.6 + 5), wz = 0.13 * noise(px * 2.6 + 71, py * 2.6 + 43, pz * 2.6 + 29);
+      const f = noise((px + wx) * 7.4, (py + wy) * 7.4, (pz + wz) * 7.4) + 0.25 * noise((px + wx) * 15 + 9, (py + wy) * 15 + 4, (pz + wz) * 15 + 2);
+      // perfil del giro: cima redondeada y pliegue en V donde el campo cruza por cero
+      const tf = Math.min(1, Math.abs(f) / 0.3);
+      let ridge = 1 - (1 - tf) * (1 - tf);
+      // cisura de Silvio: surco profundo que separa el lóbulo temporal
+      const sy = -0.30 + 0.42 * (0.30 - uz), dSyl = ux > 0.25 && uz < 0.45 && uz > -0.35 ? Math.abs(uy - sy) : 1;
+      const sylv = 1 - smooth(0.0, 0.07, dSyl);
+      ridge *= 1 - 0.9 * sylv;
+      const medial = ux < -0.2 ? 0.35 : 1, depth = 0.08 * medial;
+      const d = -depth * (1 - ridge) + 0.012 * ridge - 0.03 * sylv;
+      pos.setXYZ(i, bx + nx * d, by + ny * d, bz + nz * d);
+
+      const mottle = 0.5 + 0.5 * noise(px * 3.1 + 50, py * 3.1, pz * 3.1);
+      tmp.copy(SULCUS).lerp(GYRUS, Math.pow(tf * (1 - 0.9 * sylv), 0.9)).lerp(CREST, 0.6 * smooth(0.8, 1, ridge) * mottle);
+      col[3 * i] = tmp.r; col[3 * i + 1] = tmp.g; col[3 * i + 2] = tmp.b;
+    }
+    geo.setAttribute('color', new T.BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    return { geo, WS, HS };
+  }
+  const hemis = [1, -1].map((side, n) => {
+    const h = hemisphere(n ? 7.3 : 1.9), mesh = new T.Mesh(h.geo, cortex);
+    mesh.scale.x = side;                                    // el izquierdo es el espejo, con otro patrón de pliegues
+    brain.add(mesh);
+    return { ...h, side };
+  });
+
+  // cerebelo: dos lóbulos con láminas finas horizontales, más oscuro y pardo que la corteza
+  const CB_DARK = new T.Color('#6a2a2c'), CB_LIGHT = new T.Color('#b9666a');
+  const cgeo = new T.SphereGeometry(1, 128, 160), cpos = cgeo.attributes.position, ccol = new Float32Array(cpos.count * 3);
+  for (let i = 0; i < cpos.count; i++) {
+    const ux = cpos.getX(i), uy = cpos.getY(i), uz = cpos.getZ(i);
+    const folia = Math.sin(58 * uy + 5 * ux * ux + 2.5 * uz), crease = 1 - Math.pow(Math.abs(folia), 0.55);
+    const split = Math.exp(-(ux * ux) / 0.012) * (uz < 0.3 ? 1 : 0);          // hendidura entre los dos lóbulos
+    const k = 1 - 0.045 * crease - 0.10 * split;
+    cpos.setXYZ(i, ux * 0.40 * k, -0.37 + uy * 0.20 * k, -0.47 + uz * 0.27 * k);
+    tmp.copy(CB_DARK).lerp(CB_LIGHT, clamp(1 - crease * 1.2 - 0.5 * split, 0, 1));
+    ccol[3 * i] = tmp.r; ccol[3 * i + 1] = tmp.g; ccol[3 * i + 2] = tmp.b;
+  }
+  cgeo.setAttribute('color', new T.BufferAttribute(ccol, 3));
+  cgeo.computeVertexNormals();
+  brain.add(new T.Mesh(cgeo, new T.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, clearcoat: 0.4, clearcoatRoughness: 0.35 })));
+
+  // tronco encefálico: protuberancia y bulbo que se afina hacia la médula
+  const stemMat = new T.MeshPhysicalMaterial({ color: '#c98f84', roughness: 0.5, clearcoat: 0.35, clearcoatRoughness: 0.4 });
+  const pons = new T.Mesh(new T.SphereGeometry(1, 40, 28), stemMat);
+  pons.scale.set(0.10, 0.10, 0.09); pons.position.set(0, -0.40, -0.21);
+  const stem = new T.Mesh(new T.CylinderGeometry(0.085, 0.045, 0.42, 28, 1), stemMat);
+  stem.position.set(0, -0.60, -0.235); stem.rotation.x = 0.22;
+  brain.add(pons, stem);
+  return () => {
+    const h = hemis[Math.random() < 0.5 ? 0 : 1], pos = h.geo.attributes.position, nor = h.geo.attributes.normal;
+    let ix = Math.floor(Math.random() * h.WS), iy = 24 + Math.floor(Math.random() * (h.HS - 48));
+    let dx = (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 4), dy = (Math.random() - 0.5) * 6;
+    const pts = [], steps = 9 + Math.floor(Math.random() * 8);
+    for (let n = 0; n < steps; n++) {
+      const i = iy * (h.WS + 1) + ((ix % h.WS) + h.WS) % h.WS, j = () => (Math.random() - 0.5) * 0.022;
+      pts.push(new T.Vector3((pos.getX(i) + nor.getX(i) * 0.02 + j()) * h.side, pos.getY(i) + nor.getY(i) * 0.02 + j(), pos.getZ(i) + nor.getZ(i) * 0.02 + j()));
+      ix += Math.round(dx + (Math.random() - 0.5) * 6);
+      iy = clamp(iy + Math.round(dy + (Math.random() - 0.5) * 6), 12, h.HS - 12);
+    }
+    return pts;
+  };
+  }
+
+  // ---- modelo anatómico: lectura directa del .glb (una malla, texturas PNG embebidas)
+  async function loadModel() {
+    const res = await fetch('assets/models/brain.glb');
+    if (!res.ok) throw new Error('modelo no disponible');
+    const buf = await res.arrayBuffer(), dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('no es un GLB');
+    const jsonLen = dv.getUint32(12, true), json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen)));
+    const bin = 20 + jsonLen + 8;
+    const view = i => { const v = json.bufferViews[i]; return [bin + (v.byteOffset || 0), v.byteLength]; };
+    const accessor = (i, Arr, n) => {
+      const a = json.accessors[i], start = view(a.bufferView)[0] + (a.byteOffset || 0);
+      return new Arr(buf.slice(start, start + a.count * n * Arr.BYTES_PER_ELEMENT));
+    };
+    const texture = async (ti, srgb) => {
+      const im = json.images[json.textures[ti].source], [o, l] = view(im.bufferView);
+      const bmp = await createImageBitmap(new Blob([new Uint8Array(buf, o, l)], { type: im.mimeType }));
+      const t = new T.Texture(bmp);
+      t.flipY = false; t.wrapS = t.wrapT = T.RepeatWrapping; t.anisotropy = 8;
+      if (srgb) t.colorSpace = T.SRGBColorSpace;
+      t.needsUpdate = true;
+      return t;
+    };
+    const prim = json.meshes[0].primitives[0], mat = json.materials[prim.material];
+    const sg = mat.extensions && mat.extensions.KHR_materials_pbrSpecularGlossiness;
+    const diffuse = sg ? sg.diffuseTexture : mat.pbrMetallicRoughness.baseColorTexture;
+    const [map, normalMap] = await Promise.all([texture(diffuse.index, true), texture(mat.normalTexture.index, false)]);
+
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.BufferAttribute(accessor(prim.attributes.POSITION, Float32Array, 3), 3));
+    geo.setAttribute('normal', new T.BufferAttribute(accessor(prim.attributes.NORMAL, Float32Array, 3), 3));
+    geo.setAttribute('uv', new T.BufferAttribute(accessor(prim.attributes.TEXCOORD_0, Float32Array, 2), 2));
+    geo.setIndex(new T.BufferAttribute(accessor(prim.indices, json.accessors[prim.indices].componentType === 5125 ? Uint32Array : Uint16Array, 1), 1));
+    // centrar y llevar a la escala de la escena (el más largo de sus ejes mide ~1.7)
+    geo.computeBoundingBox();
+    const box = geo.boundingBox, c = box.getCenter(new T.Vector3()), s = box.getSize(new T.Vector3());
+    geo.translate(-c.x, -c.y, -c.z);
+    geo.scale(1.7 / Math.max(s.x, s.y, s.z), 1.7 / Math.max(s.x, s.y, s.z), 1.7 / Math.max(s.x, s.y, s.z));
+    const material = new T.MeshPhysicalMaterial({ map, color: new T.Color(1, 0.62, 0.74), normalMap, normalScale: new T.Vector2(1.25, 1.25), roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.35, side: T.DoubleSide });
+    brain.add(new T.Mesh(geo, material));
+
+    // vecindad entre vértices (soldando los duplicados de las costuras UV) para que los destellos caminen por la superficie
+    const P = geo.attributes.position, N = geo.attributes.normal, idx = geo.index, canon = new Int32Array(P.count), seen = new Map();
+    for (let i = 0; i < P.count; i++) {
+      const k = P.getX(i).toFixed(4) + ',' + P.getY(i).toFixed(4) + ',' + P.getZ(i).toFixed(4);
+      if (!seen.has(k)) seen.set(k, i);
+      canon[i] = seen.get(k);
+    }
+    const nb = new Map();
+    const link = (a, b) => { if (a === b) return; (nb.get(a) || nb.set(a, new Set()).get(a)).add(b); };
+    for (let i = 0; i < idx.count; i += 3) {
+      const a = canon[idx.getX(i)], b = canon[idx.getX(i + 1)], d = canon[idx.getX(i + 2)];
+      link(a, b); link(b, a); link(b, d); link(d, b); link(a, d); link(d, a);
+    }
+    const ids = [...nb.keys()];
+    return () => {
+      let i = ids[Math.floor(Math.random() * ids.length)];
+      const dir = new T.Vector3(Math.random() - .5, Math.random() - .5, Math.random() - .5).normalize();
+      const pts = [], used = new Set(), steps = 7 + Math.floor(Math.random() * 6), j = () => (Math.random() - 0.5) * 0.02;
+      for (let n = 0; n < steps && i !== undefined; n++) {
+        used.add(i);
+        pts.push(new T.Vector3(P.getX(i) + N.getX(i) * 0.022 + j(), P.getY(i) + N.getY(i) * 0.022 + j(), P.getZ(i) + N.getZ(i) * 0.022 + j()));
+        let best, bs = -1e9;
+        for (const k of nb.get(i)) {
+          if (used.has(k)) continue;
+          const sc = (P.getX(k) - P.getX(i)) * dir.x + (P.getY(k) - P.getY(i)) * dir.y + (P.getZ(k) - P.getZ(i)) * dir.z + 0.03 * Math.random();
+          if (sc > bs) { bs = sc; best = k; }
+        }
+        i = best;
+      }
+      return pts;
+    };
+  }
+
+
+  // ---- destellos eléctricos: tubos quebrados que avanzan sobre la corteza y se apagan
+  class Poly extends T.Curve {
+    constructor(pts) { super(); this.pts = pts; }
+    getPoint(t, target = new T.Vector3()) {
+      const n = this.pts.length - 1, f = clamp(t, 0, 1) * n, i = Math.min(n - 1, Math.floor(f));
+      return target.copy(this.pts[i]).lerp(this.pts[i + 1], f - i);
+    }
+  }
+  const glowTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,240,1)'); gr.addColorStop(0.25, 'rgba(255,200,90,.9)'); gr.addColorStop(1, 'rgba(255,140,30,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new T.CanvasTexture(c);
+  })();
+  let sparks = [], makePath = () => [];
+  function spark() {
+    const pts = makePath();
+    if (pts.length < 2) return;
+    const curve = new Poly(pts), seg = pts.length * 3;
+    const core = new T.Mesh(new T.TubeGeometry(curve, seg, 0.0048, 5, false), new T.MeshBasicMaterial({ color: 0xfff6d8, transparent: true }));
+    const halo = new T.Mesh(new T.TubeGeometry(curve, seg, 0.014, 6, false), new T.MeshBasicMaterial({ color: 0xffa436, transparent: true, opacity: 0.5, depthWrite: false }));
+    const head = new T.Sprite(new T.SpriteMaterial({ map: glowTex, transparent: true, depthWrite: false }));
+    head.scale.setScalar(0.13);
+    brain.add(halo, core, head);
+    sparks.push({ curve, core, halo, head, t: 0, dur: 380 + 260 * Math.random() });
+  }
+  function stepSparks(dt) {
+    sparks = sparks.filter(s => {
+      s.t += dt;
+      const u = Math.min(1, s.t / s.dur), fade = s.t < s.dur ? 1 : 1 - (s.t - s.dur) / 240;
+      if (fade <= 0) {
+        brain.remove(s.core, s.halo, s.head);
+        s.core.geometry.dispose(); s.halo.geometry.dispose(); s.core.material.dispose(); s.halo.material.dispose(); s.head.material.dispose();
+        return false;
+      }
+      for (const m of [s.core, s.halo]) m.geometry.setDrawRange(0, Math.floor(m.geometry.index.count * u / 6) * 6);
+      s.core.material.opacity = fade; s.halo.material.opacity = 0.5 * fade;
+      s.curve.getPoint(u, s.head.position);
+      s.head.material.opacity = s.t < s.dur ? 1 : fade * 0.6;
+      return true;
+    });
+  }
+
+  // ---- interacción: arrastrar para girar, con inercia; al soltar vuelve a girar sola
+  const AUTO = 0.32;
+  let yaw = -0.75, pitch = 0.22, vel = AUTO, drag = false, lx = 0, ly = 0, last = 0, nextSpark = 300, vis = true;
+  const render = () => { brain.rotation.set(pitch, yaw, 0); renderer.render(scene, camera); };
+  canvas.addEventListener('pointerdown', e => { drag = true; lx = e.clientX; ly = e.clientY; vel = 0; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+  canvas.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY;
+    yaw += dx * 0.011; pitch = clamp(pitch + dy * 0.011, -1.1, 1.1);
+    vel = clamp(dx * 0.011 * 60, -6, 6);
+    if (reduced) render();
+  });
+  const release = () => { drag = false; canvas.style.cursor = 'grab'; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
+  const size = () => { const w = canvas.parentElement.clientWidth; renderer.setSize(w, w, false); render(); };
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (!vis || document.hidden) { last = now; return; }
+    const dt = Math.min(60, now - last || 16); last = now;
+    if (!drag) {
+      vel += (AUTO - vel) * (1 - Math.exp(-dt / 900));
+      yaw += vel * dt / 1000;
+    }
+    if ((nextSpark -= dt) < 0) { spark(); if (Math.random() < 0.4) spark(); nextSpark = 200 + 480 * Math.random(); }
+    stepSparks(dt);
+    render();
+  };
+  size();
+  loadModel().then(fn => { makePath = fn; }).catch(() => { makePath = procedural(); }).then(() => render());
+  watchVisible(canvas, v => { vis = v; });
+  if (!reduced) requestAnimationFrame(loop);
+  return size;
+}
+
+/* ================= hero: traza en vivo ================= */
+function hero() {
+  const c = $('#heroTrace');
+  const sim = simulate({ x0: [2.5, 3.1], nbrs: [[1], [0]], K: 0.4, T: 70000, xi: [-1.5, -1.5], zi: [2.5, 3.1], every: 40 });
+  let p = reduced ? 1 : 0, vis = true, last;
+  const draw = () => {
+    const { g, w, h } = fit(c);
+    g.clearRect(0, 0, w, h);
+    const X = v => v / sim.T * w, Y = v => h * 0.5 - v * h * 0.26 - h * 0.08;
+    const n = Math.max(2, Math.floor(p * sim.n));
+    path(g, X, Y, sim.t, sim.x[1], 0, n); stroke(g, rgba(SAGE, .85), 1.6);
+    path(g, X, Y, sim.t, sim.x[0], 0, n); stroke(g, C.accent, 2);
+    if (p < 1) {
+      dot(g, X(sim.t[n - 1]), Y(sim.x[1][n - 1]), 3.5, C.sage);
+      dot(g, X(sim.t[n - 1]), Y(sim.x[0][n - 1]), 4.5, C.accent);
+    }
+  };
+  const loop = now => {
+    if (vis && p < 1) { last ??= now; p = Math.min(1, p + (now - last) / 9000); draw(); }
+    last = now;
+    if (p < 1) requestAnimationFrame(loop);
+  };
+  watchVisible(c, v => { vis = v; });
+  draw();
+  if (!reduced) requestAnimationFrame(loop);
+  return draw;
+}
+
+/* ================= laboratorio N = 1 ================= */
+function lab1() {
+  const cx = $('#l1x'), cz = $('#l1z'), cp = $('#l1ph'), inp = $('#l1x0');
+  const st = { x0: 2.5, sim: null, fps: [], p: 0, vis: false };
+  const XR = [-2.4, 1.6], ZR = [1.5, 7];
+  const nullX = [], nullZx = [];
+  for (let k = 0; k <= 300; k++) { const x = XR[0] + (XR[1] - XR[0]) * k / 300; nullZx.push(x); nullX.push(cubic(x)); }
+
+  function compute() {
+    st.x0 = +inp.value;
+    st.sim = simulate({ x0: [st.x0], nbrs: [[]], K: 0, T: 60000, xi: [-1.2], zi: [3.0], every: 30 });
+    st.fps = fixedPoints(st.x0);
+    const on = onsets(st.sim.t, st.sim.x[0]), P = meanDiff(on), osc = on.length >= 2;
+    $('#l1read').innerHTML =
+      `<div><dt>Estado</dt><dd class="${osc ? 'epi' : 'sano'}">${osc ? 'Crisis autónomas' : 'Reposo estable'}</dd></div>` +
+      `<div><dt>Período \\(T\\)</dt><dd>${osc ? Math.round(P).toLocaleString('es-CL') : '—'}</dd></div>` +
+      `<div><dt>Crisis en \\(T = 60\\,000\\)</dt><dd>${on.length}</dd></div>`;
+    $('#l1fp tbody').innerHTML = st.fps.map(f =>
+      `<tr><td>${f.x.toFixed(4)}</td><td>${f.z.toFixed(4)}</td><td>${f.re.toFixed(5)}</td><td><span class="tag ${f.stable ? 'ok' : 'no'}">${f.stable ? 'estable' : 'inestable'}</span></td></tr>`).join('');
+    tex($('#l1read'));
+    $$('#l1presets .btn').forEach(b => b.setAttribute('aria-pressed', String(Math.abs(+b.dataset.v - st.x0) < 1e-9)));
+    draw();
+  }
+  function series(c, ys, yr, color) {
+    const { g, w, h } = fit(c), s = st.sim, { X, Y } = frame(g, w, h, [0, s.T], yr);
+    const n = Math.max(2, Math.floor(st.p * s.n));
+    path(g, X, Y, s.t, ys); stroke(g, color.replace('1)', '.28)'), 1.3);
+    path(g, X, Y, s.t, ys, 0, n); stroke(g, color, 1.8);
+    g.strokeStyle = rgba([42, 32, 24], .25); g.lineWidth = 1; g.beginPath(); g.moveTo(X(s.t[n - 1]), 8); g.lineTo(X(s.t[n - 1]), h - 22); g.stroke();
+    dot(g, X(s.t[n - 1]), Y(ys[n - 1]), 4, color, C.plate);
+  }
+  function draw() {
+    if (!st.sim) return;
+    const s = st.sim;
+    series(cx, s.x[0], [-2.2, 1.6], rgba(ACC, 1));
+    series(cz, s.z[0], [2.4, 4.6], 'rgba(197,138,42,1)');
+    const { g, w, h } = fit(cp), { X, Y } = frame(g, w, h, XR, ZR, { xl: 'x', nx: 5, ny: 6 });
+    g.save(); g.beginPath(); g.rect(36, 8, w - 46, h - 30); g.clip();
+    path(g, X, Y, nullZx, nullX); stroke(g, C.ink, 1.6);
+    path(g, X, Y, nullZx, nullZx.map(x => hEq8(x, st.x0))); stroke(g, C.sage, 1.6, [6, 5]);
+    path(g, X, Y, s.x[0], s.z[0]); stroke(g, rgba(ACC, .22), 1.2);
+    const n = Math.max(2, Math.floor(st.p * s.n)), a = Math.max(0, n - 900);
+    path(g, X, Y, s.x[0], s.z[0], a, n); stroke(g, C.accent, 2.4);
+    for (const f of st.fps) dot(g, X(f.x), Y(f.z), 5, f.stable ? C.ink : C.plate, C.ink);
+    dot(g, X(s.x[0][n - 1]), Y(s.z[0][n - 1]), 6, C.accent, C.plate);
+    g.restore();
+    g.fillStyle = C.muted; g.textAlign = 'left'; g.font = MATHFONT; g.fillText('z', 42, 20);
+  }
+  ['2.0', '2.5', '2.8', '2.91', '3.0', '3.5'].forEach(v => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ghost'; b.dataset.v = v; b.textContent = v;
+    b.onclick = () => { inp.value = v; upd(); compute(); };
+    $('#l1presets').append(b);
+  });
+  const upd = bindRange(inp, $('#l1x0o'), 3, rafThrottle(compute));
+  let last;
+  const loop = now => {
+    if (st.vis) { last ??= now; st.p = (st.p + (now - last) / 16000) % 1; draw(); }
+    last = now;
+    requestAnimationFrame(loop);
+  };
+  watchVisible($('#lab1'), v => { st.vis = v; });
+  compute();
+  if (reduced) { st.p = 0.999; draw(); } else requestAnimationFrame(loop);
+  return draw;
+}
+
+/* ================= laboratorio N = 2 ================= */
+function classify(sim, x02) {
+  const k0 = Math.floor(0.3 * sim.n);
+  const on1 = onsets(sim.t, sim.x[0], -0.5, k0), on2 = onsets(sim.t, sim.x[1], -0.5, k0);
+  const n1 = on1.length, n2 = on2.length, P1 = meanDiff(on1), P2 = meanDiff(on2);
+  let reg;
+  if (!n1 && !n2) reg = 'V';
+  else if (!n2) reg = 'IV';
+  else if (!n1) reg = '—';
+  else {
+    let sync = isFinite(P1) && isFinite(P2) && Math.abs(P1 - P2) / P1 < 0.01;
+    if (sync) {
+      const lags = [];
+      for (const o of on1) { const d = on2.map(v => v - o).filter(v => v >= -0.5 * P1); if (d.length) lags.push(d[0]); }
+      sync = lags.length >= 2 && (Math.max(...lags) - Math.min(...lags)) / P1 < 0.10;
+    }
+    reg = sync ? 'II' : x02 >= X0C ? 'III' : 'I';
+  }
+  return { reg, n1, n2, P1 };
+}
+function lab2() {
+  const cx = $('#l2x'), cz = $('#l2z'), ia = $('#l2a'), ib = $('#l2b'), ik = $('#l2k'), pin = $('#l2pin');
+  const st = { sim: null, p: 1, cur: null, stop: null };
+  function compute() {
+    const a = +ia.value, b = +ib.value, K = +ik.value;
+    st.sim = simulate({ x0: [a, b], nbrs: [[1], [0]], K, T: 60000, xi: [-1.5, -1.5], zi: [a, b], every: 30 });
+    const r = classify(st.sim, b);
+    $('#l2read').innerHTML =
+      `<div><dt>Régimen</dt><dd class="epi">${r.reg}</dd></div>` +
+      `<div><dt>Crisis región 1</dt><dd>${r.n1}</dd></div><div><dt>Crisis región 2</dt><dd>${r.n2}</dd></div>` +
+      `<div><dt>Período foco \\(T_1\\)</dt><dd>${isFinite(r.P1) ? Math.round(r.P1).toLocaleString('es-CL') : '—'}</dd></div>`;
+    tex($('#l2read'));
+    // calibración del marcador sobre la figura del mapa (ejes en píxeles de la imagen 889×404)
+    pin.style.left = (68 + (K + 0.05) / 4.1 * 814) / 889 * 100 + '%';
+    pin.style.top = (35 + (clamp(b, 2, 4) - 2) / 2 * 315) / 404 * 100 + '%';
+    pin.classList.toggle('off', Math.abs(a - 2.5) > 0.005);
+    st.stop && st.stop();
+    st.stop = tween(900, u => { st.p = u; draw(); });
+  }
+  function one(c, ys, yr, cols) {
+    const { g, w, h } = fit(c), s = st.sim, { X, Y, m } = frame(g, w, h, [0, s.T], yr);
+    const n = Math.max(2, Math.floor(st.p * s.n));
+    ys.forEach((y, q) => { path(g, X, Y, s.t, y, 0, n); stroke(g, cols[q], 1.7, q ? [5, 3] : []); });
+    if (st.cur != null) {
+      const k = clamp(Math.round(st.cur * (s.n - 1)), 0, s.n - 1), px = X(s.t[k]);
+      g.strokeStyle = rgba([42, 32, 24], .35); g.lineWidth = 1; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+      ys.forEach((y, q) => dot(g, px, Y(y[k]), 4, cols[q], C.plate));
+      g.fillStyle = C.ink; g.textAlign = px > w * 0.6 ? 'right' : 'left';
+      g.fillText(`t=${Math.round(s.t[k])}  ${ys.map((y, q) => (q + 1) + ': ' + y[k].toFixed(2)).join('  ')}`, px + (px > w * 0.6 ? -8 : 8), m.t + 10);
+    }
+  }
+  function draw() {
+    if (!st.sim) return;
+    one(cx, st.sim.x, [-2.2, 1.6], [C.accent, C.sage]);
+    one(cz, st.sim.z, [2.2, 4.8], [C.accent, C.sage]);
+  }
+  [cx, cz].forEach(c => {
+    c.addEventListener('pointermove', e => {
+      const r = c.getBoundingClientRect();
+      st.cur = clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1); draw();
+    });
+    c.addEventListener('pointerleave', () => { st.cur = null; draw(); });
+  });
+  const go = rafThrottle(compute);
+  const u = [bindRange(ia, $('#l2ao'), 2, go), bindRange(ib, $('#l2bo'), 2, go), bindRange(ik, $('#l2ko'), 2, go)];
+  [['I', 2.5, 2.2, 0.05], ['II', 2.5, 2.8, 1.5], ['III', 2.5, 3.1, 0.4], ['IV', 2.5, 3.6, 0.3], ['V', 2.5, 3.8, 2.5]].forEach(([n, a, b, K]) => {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'btn ghost'; btn.textContent = n;
+    btn.onclick = () => { ia.value = a; ib.value = b; ik.value = K; u.forEach(f => f()); compute(); };
+    $('#l2presets').append(btn);
+  });
+  compute();
+  return draw;
+}
+
+/* ================= series compartidas: dibujo y cursor ================= */
+function drawSeries(c, t, T, ys, yr, cols, o = {}) {
+  const { g, w, h } = fit(c), { X, Y, m } = frame(g, w, h, [0, T], yr);
+  const n = Math.max(2, Math.floor((o.p ?? 1) * t.length));
+  g.save(); g.beginPath(); g.rect(m.l, m.t - 4, w - m.l - m.r, h - m.t - m.b + 8); g.clip();
+  for (const y of o.ghost || []) { path(g, X, Y, t, y); stroke(g, rgba([118, 104, 90], .6), 1, [2, 3]); }
+  for (const u of o.under || []) { path(g, X, Y, t, u.y, 0, n); stroke(g, u.color, 1.2); }
+  ys.forEach((y, q) => { path(g, X, Y, t, y, 0, n); stroke(g, cols[q], o.lw ?? 1.7, o.dash && q ? [5, 3] : []); });
+  g.restore();
+  if (o.cur != null) {
+    const k = clamp(Math.round(o.cur * (t.length - 1)), 0, t.length - 1), px = X(t[k]);
+    g.strokeStyle = rgba([42, 32, 24], .35); g.lineWidth = 1; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+    ys.forEach((y, q) => dot(g, px, Y(y[k]), 4, cols[q], C.plate));
+    const right = px > w * 0.6;
+    g.fillStyle = C.ink; g.textAlign = right ? 'right' : 'left';
+    g.fillText(`t=${Math.round(t[k])}  ${ys.map((y, q) => (q + 1) + ': ' + y[k].toFixed(2)).join('  ')}`, px + (right ? -8 : 8), m.t + 10);
+  }
+}
+function hoverSync(canvases, st, draw) {
+  canvases.forEach(c => {
+    c.addEventListener('pointermove', e => {
+      const r = c.getBoundingClientRect();
+      st.cur = clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1); draw();
+    });
+    c.addEventListener('pointerleave', () => { st.cur = null; draw(); });
+  });
+}
+function span(arrs, pad = 0.2) {
+  let lo = Infinity, hi = -Infinity;
+  for (const a of arrs) for (let k = 0; k < a.length; k += 4) { if (a[k] < lo) lo = a[k]; if (a[k] > hi) hi = a[k]; }
+  return [lo - pad, hi + pad];
+}
+function presetButtons(host, items, onPick) {
+  items.forEach(it => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ghost'; b.innerHTML = it.label; b._v = it.v;
+    b.onclick = () => onPick(it.v);
+    host.append(b);
+  });
+}
+
+/* ================= laboratorio x(t), z(t), h(x(t)) ================= */
+function labH() {
+  const cx = $('#lhx'), cz = $('#lhzc'), ch = $('#lhh'), ia = $('#lha'), ib = $('#lhb'), ik = $('#lhk');
+  const st = { sim: null, h: [], p: 1, cur: null, stop: null, ic: 'rand', seed: 7, showZ: true, a: 2.5, b: 2.5 };
+  function compute(animate = true) {
+    const a = +ia.value, b = +ib.value, K = +ik.value;
+    let xi = [-1.5, -1.5], zi = [a, b];
+    if (st.ic === 'rand') { const r = mulberry32(st.seed); xi = [4 * (r() - .5), 4 * (r() - .5)]; zi = [3 + 2 * (r() - .5), 3 + 2 * (r() - .5)]; }
+    st.sim = simulate({ x0: [a, b], nbrs: [[1], [0]], K, T: 30000, xi, zi, every: 15 });
+    st.h = [st.sim.x[0].map(x => hEq8(x, a)), st.sim.x[1].map(x => hEq8(x, b))];
+    st.a = a; st.b = b;
+    $$('#lhpairs .btn').forEach(q => q.setAttribute('aria-pressed', String(Math.abs(q._v[0] - a) < 1e-9 && Math.abs(q._v[1] - b) < 1e-9)));
+    $$('#lhks .btn').forEach(q => q.setAttribute('aria-pressed', String(Math.abs(q._v - K) < 1e-9)));
+    st.stop && st.stop();
+    if (animate) st.stop = tween(800, u => { st.p = u; draw(); }); else { st.p = 1; draw(); }
+  }
+  function draw() {
+    if (!st.sim) return;
+    const s = st.sim, cols = [C.accent, C.sage], o = { p: st.p, cur: st.cur, dash: true };
+    drawSeries(cx, s.t, s.T, s.x, [-2.2, 1.6], cols, o);
+    drawSeries(cz, s.t, s.T, s.z, span(s.z), cols, o);
+    const lo = Math.min(st.a, st.b, ...(st.showZ ? [span(s.z, 0)[0]] : [])) - 0.4, hi = Math.max(st.a, st.b) + 3.4;
+    drawSeries(ch, s.t, s.T, st.h, [lo, hi], cols, {
+      ...o, lw: 2,
+      under: st.showZ ? [{ y: s.z[0], color: rgba([197, 138, 42], .95) }, { y: s.z[1], color: rgba([197, 138, 42], .5) }] : [],
+    });
+  }
+  const live = rafThrottle(() => compute(false));
+  const ups = [bindRange(ia, $('#lhao'), 2, live), bindRange(ib, $('#lhbo'), 2, live), bindRange(ik, $('#lhko'), 2, live)];
+  const sync = () => { ups.forEach(f => f()); compute(); };
+  presetButtons($('#lhpairs'), [[2.5, 2.5], [2.8, 2.8], [2.0, 2.8], [2.0, 3.2]].map(v => ({ v, label: R`\((${v[0].toFixed(1)},\ ${v[1].toFixed(1)})\)` })),
+    v => { ia.value = v[0]; ib.value = v[1]; sync(); });
+  presetButtons($('#lhks'), [0, 0.2, 1.0].map(v => ({ v, label: R`\(K = ${v}\)` })), v => { ik.value = v; sync(); });
+  $$('#lhic button').forEach(b => b.onclick = () => {
+    $$('#lhic button').forEach(q => q.setAttribute('aria-pressed', String(q === b)));
+    st.ic = b.dataset.v; compute();
+  });
+  $('#lhnew').onclick = () => {
+    st.seed++; st.ic = 'rand';
+    $$('#lhic button').forEach(q => q.setAttribute('aria-pressed', String(q.dataset.v === 'rand')));
+    compute();
+  };
+  $('#lhz').onclick = e => { st.showZ = !st.showZ; e.currentTarget.setAttribute('aria-pressed', String(st.showZ)); draw(); };
+  hoverSync([cx, cz, ch], st, draw);
+  compute();
+  return draw;
+}
+
+/* ================= laboratorio con ruido (Euler-Maruyama) ================= */
+function labNoise() {
+  const cx = $('#lnx'), cz = $('#lnz');
+  const isx = $('#lnsx'), isz = $('#lnsz'), ik = $('#lnk'), ia = $('#lna'), ib = $('#lnb');
+  const T = 50000, dt = 0.1, steps = 500000, every = 50, ns = steps / every + 1, sq = Math.sqrt(dt);
+  const st = { seed: 11, W: null, wseed: -1, res: null, det: null, detKey: '', showDet: true, cur: null };
+
+  // incrementos gaussianos fijos por semilla: al mover σ se deforma la misma realización
+  function noise() {
+    if (st.wseed === st.seed) return st.W;
+    const r = mulberry32(st.seed * 7919 + 1), W = new Float32Array(4 * steps);
+    for (let k = 0; k < W.length; k += 2) {
+      const u = Math.sqrt(-2 * Math.log(1 - r())), v = 6.283185307179586 * r();
+      W[k] = u * Math.cos(v); W[k + 1] = u * Math.sin(v);
+    }
+    st.W = W; st.wseed = st.seed;
+    return W;
+  }
+  function em(a, b, K, sx, sz) {
+    const W = noise(), t = new Float32Array(ns);
+    const X1 = new Float32Array(ns), X2 = new Float32Array(ns), Z1 = new Float32Array(ns), Z2 = new Float32Array(ns);
+    let x1 = -1.5, x2 = -1.5, z1 = a, z2 = b;
+    X1[0] = x1; X2[0] = x2; Z1[0] = z1; Z2[0] = z2;
+    const ax = sx * sq, az = sz * sq;
+    for (let n = 1; n <= steps; n++) {
+      const q = 4 * (n - 1);
+      const d1 = (-x1 * x1 * x1 - 2 * x1 * x1 + 1 - z1 + I1) * dt + ax * W[q];
+      const d2 = (-x2 * x2 * x2 - 2 * x2 * x2 + 1 - z2 + I1) * dt + ax * W[q + 1];
+      const e1 = (hEq8(x1, a) - z1 - K * (x2 - x1)) / TAU0 * dt + az * W[q + 2];
+      const e2 = (hEq8(x2, b) - z2 - K * (x1 - x2)) / TAU0 * dt + az * W[q + 3];
+      x1 += d1; x2 += d2; z1 += e1; z2 += e2;
+      if (n % every === 0) { const k = n / every; t[k] = n * dt; X1[k] = x1; X2[k] = x2; Z1[k] = z1; Z2[k] = z2; }
+    }
+    return { t, x: [X1, X2], z: [Z1, Z2] };
+  }
+  // conteo con histéresis, entra en crisis sobre −0.5 y sale bajo −1.0
+  function crises(x) {
+    let ict = x[0] > -0.5, n = 0, d = 0;
+    for (let k = 1; k < x.length; k++) {
+      if (!ict && x[k] > -0.5) { ict = true; n++; } else if (ict && x[k] < -1) ict = false;
+      if (ict) d++;
+    }
+    return { n, duty: d / x.length };
+  }
+  function compute() {
+    const a = +ia.value, b = +ib.value, K = +ik.value, sx = +isx.value, sz = +isz.value;
+    const key = [a, b, K].join();
+    if (key !== st.detKey) { st.det = em(a, b, K, 0, 0); st.detKey = key; }
+    st.res = em(a, b, K, sx, sz);
+    const c1 = crises(st.res.x[0]), c2 = crises(st.res.x[1]), d2 = crises(st.det.x[1]);
+    const induced = c2.n > 0 && d2.n === 0;
+    $('#lnread').innerHTML =
+      `<div><dt>Crisis región 1</dt><dd>${c1.n}</dd></div><div><dt>Crisis región 2</dt><dd class="${c2.n ? 'epi' : 'sano'}">${c2.n}</dd></div>` +
+      `<div><dt>Región 2 reclutada</dt><dd class="${c2.n ? 'epi' : 'sano'}">${c2.n ? (induced ? 'Sí, por ruido' : 'Sí') : 'No'}</dd></div>` +
+      `<div><dt>Tiempo ictal región 2</dt><dd>${(100 * c2.duty).toFixed(1)} %</dd></div>`;
+    draw();
+  }
+  function draw() {
+    if (!st.res) return;
+    const r = st.res, cols = [C.accent, C.sage];
+    drawSeries(cx, r.t, T, r.x, [-2.5, 1.9], cols, { cur: st.cur, lw: 1.2, ghost: st.showDet ? st.det.x : [] });
+    drawSeries(cz, r.t, T, r.z, span([...r.z, ...st.det.z]), cols, { cur: st.cur, lw: 1.3, ghost: st.showDet ? st.det.z : [] });
+  }
+  const go = rafThrottle(compute);
+  bindRange(isx, $('#lnsxo'), 3, go); bindRange(isz, $('#lnszo'), 4, go);
+  bindRange(ik, $('#lnko'), 2, go); bindRange(ia, $('#lnao'), 2, go); bindRange(ib, $('#lnbo'), 2, go);
+  $('#lnnew').onclick = () => { st.seed++; st.detKey = ''; compute(); };
+  $('#lndet').onclick = e => { st.showDet = !st.showDet; e.currentTarget.setAttribute('aria-pressed', String(st.showDet)); draw(); };
+  hoverSync([cx, cz], st, draw);
+  compute();
+  return draw;
+}
+
+/* ================= laboratorio grafo dinámico ================= */
+const NB_X0 = [2.3, 2.4, 3.1225, 3.4561, 3.2863, 3.3937, 3.166, 3.0363, 3.2328, 2.9383];
+function mulberry32(a) {
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function lab3() {
+  const cg = $('#g-graph'), cm = $('#g-mat'), ct = $('#g-ts'), tip = $('#g-tip'), busy = $('#g-busy');
+  const iN = $('#g-n'), iF = $('#g-f'), iK = $('#g-k'), iS = $('#g-s'), iT = $('#g-time');
+  const st = { dir: 'A', variant: 'eq8', sim: null, x0: [], nbrs: [], Ti: [], wmax: 0, K: 0.1, th: -0.5, fr: 0, playing: !reduced, vis: false, phase: 0, pos: [], hover: -1, ictal: -1 };
+
+  function build() {
+    const N = +iN.value, F = Math.min(+iF.value, N - 1), seed = +iS.value, K = +iK.value;
+    let x0;
+    if (N === 10 && F === 2 && seed === 42) x0 = NB_X0.slice();
+    else { const r = mulberry32(seed), foci = [2.3, 2.4, 2.5, 2.2]; x0 = Array.from({ length: N }, (_, i) => i < F ? foci[i] : 2.9 + 0.6 * r()); }
+    const nbrs = x0.map((xi, i) => x0.map((xj, j) => j).filter(j => j !== i && (st.dir === 'A' ? x0[j] < xi : x0[j] > xi)));
+    const eq8 = st.variant === 'eq8';
+    const sim = simulate(eq8
+      ? { x0, nbrs, K, T: 20000, xi: x0.map(() => -1.5), zi: x0.slice(), h: hEq8, every: 100 }
+      : { x0, nbrs, K, T: 5000, xi: x0.map(() => -1), zi: x0.map(() => 0), h: hNb, every: 25 });
+    st.th = eq8 ? -0.5 : 1.0;
+    // T_i: primer cruce sostenido (≥ 50 unidades de tiempo) sobre el umbral
+    const Ti = sim.x.map(x => {
+      let s = -1;
+      for (let k = 0; k < sim.n; k++) {
+        if (x[k] > st.th) { if (s < 0) s = k; if (sim.t[k] - sim.t[s] >= 50) return sim.t[s]; } else s = -1;
+      }
+      return Infinity;
+    });
+    let wmax = 0;
+    for (let i = 0; i < N; i++) for (const j of nbrs[i]) for (let k = 0; k < sim.n; k += 2) wmax = Math.max(wmax, K * Math.abs(sim.x[j][k] - sim.x[i][k]));
+    Object.assign(st, { sim, x0, nbrs, Ti, wmax, K, tipFor: -1 });
+    iT.max = sim.n - 1;
+    if (st.fr > sim.n - 1) st.fr = 0;
+
+    const healthy = x0.map((v, i) => i).filter(i => x0[i] >= X0C), recd = healthy.filter(i => isFinite(Ti[i]));
+    const firstH = recd.length ? Math.min(...recd.map(i => Ti[i])) : NaN;
+    $('#g-read').innerHTML =
+      `<div><dt>Aristas</dt><dd>${nbrs.reduce((a, b) => a + b.length, 0)}</dd></div>` +
+      `<div><dt>Sanas reclutadas \\(R\\)</dt><dd class="epi">${healthy.length ? (recd.length / healthy.length).toFixed(2) : '—'}</dd></div>` +
+      `<div><dt>Primera sana</dt><dd>${isFinite(firstH) ? R`\(t = ${Math.round(firstH)}\)` : '—'}</dd></div>` +
+      `<div><dt>En crisis ahora</dt><dd id="g-now">0</dd></div>`;
+    const order = x0.map((v, i) => i).sort((a, b) => Ti[a] - Ti[b] || a - b);
+    $('#g-rec').innerHTML = order.map(i =>
+      `<li data-i="${i}" class="${x0[i] < X0C ? 'epi' : ''}"><span class="dot">${i}</span><span>${R`\(${x0[i].toFixed(2)}\)`}</span>` +
+      `<span class="bar"><i style="width:${isFinite(Ti[i]) ? Math.max(2, Ti[i] / sim.T * 100) : 0}%"></i></span>` +
+      `<span>${isFinite(Ti[i]) ? R`\(${Math.round(Ti[i])}\)` : R`\(\infty\)`}</span></li>`).join('');
+    $('#g-varnote').innerHTML = eq8
+      ? R`\(h(x) = x_0 + 3\,\sigma\big(\tfrac{x+0.5}{0.1}\big)\), reposo inicial \(x_i(0) = -1.5,\ z_i(0) = x_{0,i}\). Crisis si \(x_i \gt -0.5\).`
+      : R`\(h(x) = x_0 - 3 + 3\,\sigma\big(\tfrac{x-0.5}{0.1}\big)\), \(z_i(0) = 0\), en la variante del experimento base. Umbral \(x_i \gt 1.0\).`;
+    ['#g-varnote', '#g-read', '#g-rec'].forEach(q => tex($(q)));
+    st.tshown = -1;
+    st.ictal = -1;
+    draw();
+  }
+  let timer;
+  const rebuild = () => {
+    busy.classList.add('on');
+    clearTimeout(timer);
+    timer = setTimeout(() => { build(); busy.classList.remove('on'); }, 140);
+  };
+
+  function layout(w, h) {
+    const N = st.x0.length, R = Math.min(w, h) / 2 - 36;
+    st.pos = st.x0.map((_, i) => { const a = -Math.PI / 2 + i / N * 2 * Math.PI; return [w / 2 + R * Math.cos(a), h / 2 + R * Math.sin(a)]; });
+    return N > 12 ? 13 : 17;
+  }
+  function drawGraph() {
+    const { g, w, h } = fit(cg), s = st.sim, k = st.fr, N = st.x0.length, r = layout(w, h);
+    g.clearRect(0, 0, w, h);
+    const cxm = w / 2, cym = h / 2;
+    for (let i = 0; i < N; i++) for (const j of st.nbrs[i]) {
+      const W = st.K * Math.abs(s.x[j][k] - s.x[i][k]), u = st.wmax > 0 ? W / st.wmax : 0;
+      const [x1, y1] = st.pos[j], [x2, y2] = st.pos[i];
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, qx = mx + (cxm - mx) * 0.22, qy = my + (cym - my) * 0.22;
+      const d1 = Math.hypot(qx - x1, qy - y1) || 1, d2 = Math.hypot(qx - x2, qy - y2) || 1;
+      const sx = x1 + (qx - x1) / d1 * r, sy = y1 + (qy - y1) / d1 * r, ex = x2 + (qx - x2) / d2 * (r + 5), ey = y2 + (qy - y2) / d2 * (r + 5);
+      const hot = st.hover < 0 || st.hover === i || st.hover === j;
+      const col = st.x0[j] < X0C ? ACC : [140, 112, 84], al = (0.07 + 0.83 * u) * (hot ? 1 : 0.15);
+      g.beginPath(); g.moveTo(sx, sy); g.quadraticCurveTo(qx, qy, ex, ey);
+      g.strokeStyle = rgba(col, al); g.lineWidth = 0.6 + 4.2 * u; g.stroke();
+      const ang = Math.atan2(ey - qy, ex - qx), al2 = 4 + 5 * u;
+      g.beginPath(); g.moveTo(ex, ey); g.lineTo(ex - al2 * Math.cos(ang - 0.45), ey - al2 * Math.sin(ang - 0.45)); g.lineTo(ex - al2 * Math.cos(ang + 0.45), ey - al2 * Math.sin(ang + 0.45)); g.closePath();
+      g.fillStyle = rgba(col, Math.min(1, al + 0.1)); g.fill();
+      if (u > 0.25 && hot && !reduced) {           // pulso que viaja de j hacia i
+        const v = (st.phase * (0.5 + u) + (i * 7 + j * 3) % 10 / 10) % 1, a = 1 - v;
+        dot(g, a * a * sx + 2 * a * v * qx + v * v * ex, a * a * sy + 2 * a * v * qy + v * v * ey, 1.5 + 2 * u, rgba(col, 0.9));
+      }
+    }
+    let now = 0;
+    for (let i = 0; i < N; i++) {
+      const [x, y] = st.pos[i], xv = s.x[i][k], act = clamp((xv + 1.4) / 1.7, 0, 1), epi = st.x0[i] < X0C, ict = xv > st.th;
+      if (ict) {
+        now++;
+        g.beginPath(); g.arc(x, y, r + 6 + (reduced ? 0 : 2 * Math.sin(st.phase * 12 + i)), 0, 6.2832);
+        g.strokeStyle = rgba(ACC, .35); g.lineWidth = 2; g.stroke();
+      }
+      g.beginPath(); g.arc(x, y, r, 0, 6.2832);
+      g.fillStyle = mix(CREAM, ACC, act); g.fill();
+      g.lineWidth = st.hover === i ? 4 : 3; g.strokeStyle = epi ? C.accent : C.sage; g.stroke();
+      g.fillStyle = act > 0.55 ? '#fff' : C.ink; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = `${r > 14 ? 13 : 11}px "JetBrains Mono", monospace`; g.fillText(i, x, y + 0.5); g.textBaseline = 'alphabetic';
+    }
+    if (now !== st.ictal) { st.ictal = now; const el = $('#g-now'); if (el) el.textContent = `${now} / ${N}`; }
+  }
+  function drawMat() {
+    const { g, w, h } = fit(cm), s = st.sim, k = st.fr, N = st.x0.length;
+    g.clearRect(0, 0, w, h);
+    const size = Math.min(w - 30, h - 22), cell = size / N, ox = (w - size) / 2 + 8, oy = 16;
+    g.font = '10px "JetBrains Mono", monospace'; g.fillStyle = C.muted; g.textAlign = 'center';
+    for (let i = 0; i < N; i++) {
+      if (N <= 12) { g.fillText(i, ox + (i + .5) * cell, 11); g.fillText(i, ox - 9, oy + (i + .5) * cell + 3); }
+      const set = new Set(st.nbrs[i]);
+      for (let j = 0; j < N; j++) {
+        const u = set.has(j) && st.wmax > 0 ? st.K * Math.abs(s.x[j][k] - s.x[i][k]) / st.wmax : 0;
+        g.fillStyle = set.has(j) ? mix([240, 230, 214], ACC, u) : '#faf5ec';
+        g.fillRect(ox + j * cell + .5, oy + i * cell + .5, cell - 1, cell - 1);
+      }
+    }
+  }
+  function drawTs() {
+    const { g, w, h } = fit(ct), s = st.sim, N = st.x0.length;
+    const { X, Y, m } = frame(g, w, h, [0, s.T], [-2.2, 1.6]);
+    g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(st.th)); g.lineTo(w - 10, Y(st.th)); g.stroke(); g.setLineDash([]);
+    for (let i = N - 1; i >= 0; i--) {
+      const epi = st.x0[i] < X0C, on = st.hover < 0 || st.hover === i;
+      path(g, X, Y, s.t, s.x[i]); stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .6) : .12), epi || st.hover === i ? 1.9 : 1.1);
+    }
+    const px = X(s.t[st.fr]);
+    g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+    dot(g, px, m.t, 4, C.ink);
+  }
+  function syncDom() {
+    const t = st.sim.t[st.fr];
+    iT.value = st.fr;
+    iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
+    if (st.tshown !== st.fr) {
+      st.tshown = st.fr;
+      const o = $('#g-tout');
+      if (window.katex) katex.render(`t = ${Math.round(t)}`, o, { throwOnError: false }); else o.textContent = 't = ' + Math.round(t);
+    }
+    $$('#g-rec li').forEach(li => li.classList.toggle('on', st.Ti[+li.dataset.i] <= t));
+  }
+  function draw() { if (!st.sim) return; drawGraph(); drawMat(); drawTs(); syncDom(); }
+
+  const setPlay = v => {
+    st.playing = v;
+    $('#g-playicon').setAttribute('d', v ? 'M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z' : 'M4 2.5v11l9-5.5z');
+  };
+  let last, acc = 0;
+  const loop = now => {
+    if (st.vis && st.sim) {
+      last ??= now;
+      const dtm = Math.min(60, now - last);
+      st.phase += dtm / 1000;
+      if (st.playing) {
+        acc += dtm / 16000 * (st.sim.n - 1);
+        if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; }
+      }
+      if (st.playing || !reduced) draw();
+    }
+    last = now;
+    requestAnimationFrame(loop);
+  };
+
+  bindRange(iN, $('#g-no'), 0, rebuild); bindRange(iF, $('#g-fo'), 0, rebuild);
+  bindRange(iK, $('#g-ko'), 3, rebuild); bindRange(iS, $('#g-so'), 0, rebuild);
+  const seg = (id, key) => $$(`#${id} button`).forEach(b => b.onclick = () => {
+    $$(`#${id} button`).forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st[key] = b.dataset.v; st.fr = 0; rebuild();
+  });
+  seg('g-dir', 'dir'); seg('g-var', 'variant');
+  $('#g-play').onclick = () => setPlay(!st.playing);
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); draw(); });
+  const seek = e => { const r = ct.getBoundingClientRect(); st.fr = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * (st.sim.n - 1)); setPlay(false); draw(); };
+  ct.addEventListener('pointerdown', e => { seek(e); ct.setPointerCapture(e.pointerId); ct.onpointermove = seek; });
+  ct.addEventListener('pointerup', () => { ct.onpointermove = null; });
+  cg.addEventListener('pointermove', e => {
+    const b = cg.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+    let hit = -1;
+    st.pos.forEach((p, i) => { if (Math.hypot(p[0] - x, p[1] - y) < 22) hit = i; });
+    st.hover = hit;
+    if (hit >= 0) {
+      const T = st.Ti[hit];
+      if (st.tipFor !== hit) {
+        st.tipFor = hit;
+        tip.innerHTML = `nodo ${hit} · ${R`\(x_{0,${hit}} = ${st.x0[hit].toFixed(3)}\)`}<br>recibe de ${st.nbrs[hit].length} · influye sobre ${st.nbrs.filter(n => n.includes(hit)).length}<br>${isFinite(T) ? R`\(T_{${hit}} = ${Math.round(T)}\)` : 'no reclutado'}`;
+        tex(tip);
+      }
+      tip.style.left = clamp(x + 16, 0, b.width - 190) + 'px'; tip.style.top = (y + 34) + 'px';
+    }
+    tip.classList.toggle('on', hit >= 0);
+    cg.style.cursor = hit >= 0 ? 'pointer' : 'default';
+    if (reduced || !st.playing) draw();
+  });
+  cg.addEventListener('pointerleave', () => { st.hover = -1; tip.classList.remove('on'); draw(); });
+  watchVisible($('#lab3'), v => { st.vis = v; });
+  setPlay(st.playing);
+  build();
+  if (reduced) { st.fr = Math.floor(st.sim.n * 0.3); draw(); }
+  requestAnimationFrame(loop);
+  return draw;
+}
+
+/* ================= láminas de figuras ================= */
+const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap });
+const PLATES = {
+  n1: [
+    { t: 'Permitividad', figs: [F('P_9_0', '', R`Función \(h(x)\) para cinco valores de \(x_0\): un escalón suave de altura \(3\) centrado en \(x = -0.5\) que \(x_0\) desplaza verticalmente.`)] },
+    { t: 'Nullclinas', figs: [F('P_12_0', '', R`Nullclina cúbica \(\dot x = 0\) y nullclina sigmoidal \(\dot z = 0\). Al subir \(x_0\) el cruce pasa de la rama media a la rama izquierda estable.`)] },
+    { t: 'Series de tiempo', wide: true, figs: [F('P_18_0', '', R`\(x(t)\) y \(z(t)\) para \(x_0 \in \{2.0,\ 2.5,\ 2.8,\ 3.0,\ 3.5\}\): oscilaciones de relajación bajo el umbral, reposo sobre él.`)] },
+    { t: 'Plano de fase', wide: true, figs: [F('P_19_0', '', R`Trayectorias sobre las nullclinas: ciclo límite para \(x_0 \lt 2.91\) y convergencia al punto fijo para \(x_0 \gt 2.91\).`)] },
+    { t: 'Zona crítica', wide: true, figs: [F('P_21_0', '', R`Barrido fino \(x_0 \in \{2.89,\ \dots,\ 2.92\}\) desde la misma condición inicial \((x, z) = (-1.2,\ 3.0)\): el intervalo entre crisis se alarga hasta que la oscilación desaparece.`)] },
+    { t: 'Período', figs: [F('P_23_0', '', R`Período \(T(x_0)\) medido entre máximos: crece de \(\sim 4\,850\) a más de \(20\,000\) al acercarse a \(x_0 = 2.91\).`)] },
+    { t: 'Frecuencia', figs: [F('P_24_0', '', R`Frecuencia de crisis por dos métodos, \(f = 1/T\) y conteo de máximos. Cae continuamente a cero en el umbral.`)] },
+    { t: 'Amplitud', figs: [F('P_25_0', '', R`Amplitud \(\max x - \min x\) en régimen permanente: se mantiene alta y cae de golpe.`)] },
+    { t: 'Bifurcación', figs: [F('P_26_0', '', R`Diagrama de bifurcación: máximos de \(x(t)\), puntos fijos estables (negro) e inestables (rojo) en función de \(x_0\).`)] },
+  ],
+  n2series: [
+    { t: 'Excitabilidades iguales', wide: true, figs: [
+      F('P_36_0', R`\(K = 0.01\)`, R`Regiones idénticas con \(x_{0,1} = x_{0,2} \in \{2.0,\ \dots,\ 3.5\}\) y condiciones iniciales aleatorias. Con \(K = 0.01\) cada una conserva su fase.`),
+      F('P_38_0', R`\(K = 0.5\)`, R`Con \(K = 0.5\) las dos regiones se sincronizan tras un transitorio.`),
+      F('P_40_0', R`\(K = 5\)`, R`Con \(K = 5\) la sincronía es casi inmediata.`)] },
+    { t: 'Foco + vecina', wide: true, figs: [
+      F('P_46_0', R`\(K = 0\)`, R`Pares \((x_{0,1},\ x_{0,2}) \in \{(2.0, 3.2),\ (2.5, 3.2),\ (2.8, 3.2),\ (2.0, 2.8)\}\). Sin acoplamiento la región sana no hace crisis.`),
+      F('P_46_1', R`\(K = 0.2\)`, R`Acoplamiento débil \(K = 0.2\): aparecen reclutamientos parciales.`),
+      F('P_46_2', R`\(K = 1.0\)`, R`Acoplamiento fuerte \(K = 1.0\): la región sana es arrastrada en cada crisis.`)] },
+    { t: 'Onda rectangular', wide: true, figs: [
+      F('P_48_0', R`\(K = 0\)`, R`\(z_i(t)\) junto a la onda rectangular \(h(x_i(t))\) que lo fuerza, para pares simétricos y uno asimétrico.`),
+      F('P_48_1', R`\(K = 0.2\)`, R`Mismos pares con \(K = 0.2\).`),
+      F('P_48_2', R`\(K = 1.0\)`, R`Mismos pares con \(K = 1.0\).`)] },
+    { t: 'Par simétrico', figs: [
+      F('P_50_0', R`\(K = 0\)`, R`Dos regiones idénticas, \(x_0 = (2.5,\ 2.5)\): \(x_i(t)\) y \(h(x_i(t))\).`),
+      F('P_50_1', R`\(K = 0.2\)`, R`\(x_0 = (2.5,\ 2.5)\) con \(K = 0.2\).`),
+      F('P_50_2', R`\(K = 1.0\)`, R`\(x_0 = (2.5,\ 2.5)\) con \(K = 1.0\).`)] },
+    { t: 'Par asimétrico', figs: [
+      F('P_51_0', R`\(K = 0\)`, R`\(x_0 = (2.0,\ 2.8)\): dos regiones epileptogénicas con frecuencias propias distintas.`),
+      F('P_51_1', R`\(K = 1.0\)`, R`\(x_0 = (2.0,\ 2.8)\) con \(K = 1.0\): la más lenta sigue a la más rápida.`)] },
+    { t: 'C.I. aleatorias', wide: true, figs: [
+      F('P_54_0', R`\((2.5,\ 2.5),\ K = 0\)`, R`\(x_i(t)\), \(z_i(t)\) y \(h(x_i(t))\) con condiciones iniciales aleatorias fijas, para comparar entre valores de \(K\).`),
+      F('P_54_1', R`\((2.5,\ 2.5),\ K = 0.2\)`, R`Mismas condiciones iniciales, \(K = 0.2\).`),
+      F('P_54_2', R`\((2.5,\ 2.5),\ K = 1.0\)`, R`Mismas condiciones iniciales, \(K = 1.0\).`),
+      F('P_54_3', R`\((2.0,\ 2.8),\ K = 0\)`, R`Par asimétrico \(x_0 = (2.0,\ 2.8)\) sin acoplamiento.`),
+      F('P_54_4', R`\((2.0,\ 2.8),\ K = 1.0\)`, R`Par asimétrico \(x_0 = (2.0,\ 2.8)\) con \(K = 1.0\).`)] },
+  ],
+  n2maps: [
+    { t: 'Actividad ictal', wide: true, figs: [F('P_56_0', '', R`Fracción del tiempo en estado ictal en el plano \((x_{0,1},\ x_{0,2})\) para \(K \in \{0,\ 0.2,\ 1,\ 3\}\). Al crecer \(K\) la frontera deja de ser \(x_0 = 2.91\) por región y pasa a depender de ambas.`)] },
+    { t: 'Regímenes', wide: true, figs: [F('P_59_0', '', R`Mapa de regímenes I a V en \((K,\ x_{0,2})\) con \(x_{0,1} = 2.5\): reproduce la figura 5A de Proix et al.`)] },
+    { t: 'Ciclo de trabajo', figs: [F('P_60_0', '', R`Fracción de tiempo ictal de la región 2 en \((K,\ x_{0,2})\).`)] },
+    { t: 'Duración', figs: [F('P_61_0', '', R`Duración media de las crisis en cada región en \((K,\ x_{0,2})\).`)] },
+  ],
+  n2noise: [
+    { t: 'Series con ruido', figs: [F('P_64_0', '', R`\(x_0 = (2.5,\ 3.5)\), \(K = 0.5\), \(\sigma_x = 0.02\) y \(\sigma_z\) creciente: el ruido en la permitividad dispara crisis en la región sana.`)] },
+    { t: 'Probabilidad', figs: [F('P_65_0', '', R`Probabilidad de que la región 2 haga al menos una crisis (\(30\) réplicas por punto) en función de \(\sigma_z\), para \(K \in \{0,\ 0.3,\ 0.6,\ 0.9\}\).`)] },
+  ],
+  n2scale: [
+    { t: 'Campo medio', wide: true, figs: [F('P_67_1', '', R`Campo medio \(\bar x(t)\) para \(N = 2, \dots, 100\) con \(K \cdot N = 1\), desde condiciones casi sincrónicas y aleatorias.`)] },
+    { t: 'Sincronía', wide: true, figs: [F('P_67_2', '', R`Dispersión transversal \(\sigma_\perp^2(t)\) y su mediana en función de \(N\) para cuatro configuraciones.`)] },
+    { t: 'Exponente', figs: [F('P_69_0', '', R`Exponente transversal \(\lambda_\perp\) sobre la órbita sincrónica en función de \(K \cdot N\), para \(x_0 = 2.5\) y \(x_0 = 2.8\).`)] },
+    { t: 'Fronteras', figs: [F('P_70_1', '', R`Regímenes para \(N = 2\) y fronteras superpuestas para \(N \in \{2,\ 4,\ 10,\ 50\}\) con \(c = K \cdot N\).`)] },
+  ],
+  grafo: [
+    { t: 'Grafo estructural', figs: [F('G_11_0', '', R`Grafo \(A\) para \(N = 10\): en rojo los nodos con \(x_0 \lt 2.91\), en azul el resto. Etiquetas: índice \(i\) y \(x_{0,i}\).`)] },
+    { t: 'Grafo dinámico', figs: [F('G_34_0', '', R`Pesos \(W_{ij}(t)\) en tres instantes de la simulación: \(t = 0\), \(t = T/2\) y \(t = 0.9\,T\).`)] },
+    { t: 'Series', wide: true, figs: [
+      F('G_22_2', 'Todas', R`\(x_i(t)\) de las diez regiones con \(K = 0.1\): salto inicial a la rama alta y decaimiento lento.`),
+      F('G_22_0', 'Epileptogénicas', R`Regiones \(0\) y \(1\) \((x_0 = 2.3,\ 2.4)\).`),
+      F('G_22_1', 'Sanas', R`Regiones \(2\) a \(9\).`),
+      F('G_22_3', 'Actividad media', R`Observables colectivos \(m_N(t)\), \(m_{\rm epi}(t)\) y \(m_{\rm sano}(t)\).`)] },
+    { t: 'Espacio-tiempo', wide: true, figs: [F('G_29_0', '', R`Mapa espacio-tiempo \(X_{i,k} = x_i(t_k)\).`)] },
+    { t: 'Influencia', figs: [F('G_32_0', '', R`Matriz de influencia acumulada \(I_{ij} = \int_0^T W_{ij}(t)\,dt\).`)] },
+    { t: 'Reclutamiento', figs: [
+      F('G_25_0', R`\(T_i\)`, R`Tiempos de reclutamiento \(T_i\) por región (umbral \(x_{\rm th} = 1.0\), duración mínima \(\Delta t = 50\)).`),
+      F('G_45_1', R`\(R(K)\)`, R`Fracción de regiones sanas reclutadas \(R(K)\).`)] },
+    { t: 'Centralidad', wide: true, figs: [
+      F('G_37_0', R`\(C_B\) vs \(H^{dyn,out}\)`, R`Centralidad de intermediación \(C_B(i)\) contra hub dinámico de salida \(H_i^{dyn,out}\).`),
+      F('G_37_1', R`\(C_B\) vs \(T_i\)`, R`Centralidad de intermediación \(C_B(i)\) contra tiempo de reclutamiento \(T_i\).`)] },
+  ],
+};
+let M = null;   // módulo Motion, si cargó
+function plates() {
+  const box = $('#lightbox'), bimg = $('img', box), bcap = $('p', box);
+  $('button', box).onclick = () => box.close();
+  box.addEventListener('click', e => { if (e.target === box) box.close(); });
+  $$('[data-plates]').forEach(host => {
+    PLATES[host.dataset.plates].forEach((p, idx) => {
+      const fig = document.createElement('figure');
+      fig.className = 'plate' + (p.wide ? ' wide' : '');
+      fig.dataset.reveal = ''; fig.dataset.delay = p.wide ? 0 : (idx % 2) * 0.08;
+      let cur = 0;
+      const tabs = p.figs.length > 1 ? `<div class="plate-tabs" role="tablist">${p.figs.map((f, k) => `<button type="button" role="tab" aria-selected="${k === 0}">${f.label}</button>`).join('')}</div>` : '';
+      fig.innerHTML = `${tabs}<button type="button" class="plate-img" aria-label="Ampliar figura: ${p.t}"><img loading="lazy" alt="Figura: ${p.t}" src="${p.figs[0].src}"></button><figcaption><b>${p.t}</b><span>${p.figs[0].cap}</span></figcaption>`;
+      const img = $('img', fig), cap = $('figcaption span', fig);
+      $$('.plate-tabs button', fig).forEach((b, k) => b.onclick = () => {
+        if (k === cur) return;
+        const dirn = k > cur ? 1 : -1; cur = k;
+        $$('.plate-tabs button', fig).forEach((o, q) => o.setAttribute('aria-selected', String(q === k)));
+        img.src = p.figs[k].src; cap.innerHTML = p.figs[k].cap; tex(cap);
+        if (M && !reduced) M.animate(img, { opacity: [0, 1], x: [14 * dirn, 0] }, { duration: 0.35, ease: [0.22, 1, 0.36, 1] });
+      });
+      $('.plate-img', fig).onclick = () => {
+        bimg.src = p.figs[cur].src; bimg.alt = 'Figura: ' + p.t; bcap.innerHTML = p.figs[cur].cap; tex(bcap);
+        box.showModal();
+        if (M && !reduced) M.animate(bimg, { opacity: [0, 1], scale: [0.94, 1] }, { type: 'spring', stiffness: 260, damping: 26 });
+      };
+      host.append(fig);
+    });
+  });
+}
+
+/* ================= navegación ================= */
+function nav() {
+  const links = $$('#navlist a'), map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) links.forEach(a => a.setAttribute('aria-current', String(a === map.get(e.target.id))));
+  }), { rootMargin: '-45% 0px -50% 0px' });
+  map.forEach((_, id) => io.observe(document.getElementById(id)));
+}
+
+/* ================= Motion: entradas, scroll y contadores ================= */
+function motion(m) {
+  M = m;
+  const { animate, inView, scroll, stagger } = m, ease = [0.22, 1, 0.36, 1];
+  const root = document.documentElement;
+  if (reduced) { root.classList.remove('pre'); return; }
+  root.classList.add('js-motion');
+  animate('[data-hero]', { opacity: [0, 1], y: [26, 0] }, { duration: 0.9, delay: stagger(0.1), ease });
+  root.classList.remove('pre');
+  const elOf = a => a instanceof Element ? a : a.target;   // v11 entrega la entrada del observer; v12, el elemento
+  inView('[data-reveal]', arg => {
+    const el = elOf(arg);
+    animate(el, { opacity: [0, 1], y: [28, 0] }, { duration: 0.75, delay: +(el.dataset.delay || 0), ease });
+  }, { margin: '0px 0px -8% 0px' });
+  // manchas de color que derivan lentamente y se desplazan con el scroll
+  [['.b1', [0, 90, -50, 0], [0, 70, 120, 0], 46], ['.b2', [0, -110, -30, 0], [0, -60, 80, 0], 58], ['.b3', [0, 70, -90, 0], [0, -90, -20, 0], 52]]
+    .forEach(([sel, x, y, duration]) => animate(sel, { x, y, scale: [1, 1.14, 0.94, 1] }, { duration, repeat: Infinity, ease: 'easeInOut' }));
+  scroll(animate('#bgDrift', { y: ['0vh', '-18vh'] }, { ease: 'linear' }));
+  scroll(animate('#brain', { y: [0, 90], opacity: [1, 0.15] }, { ease: 'linear' }), { target: $('.hero'), offset: ['start start', 'end start'] });
+  scroll(animate('#progress', { scaleX: [0, 1] }, { ease: 'linear' }));
+  $$('.num').forEach(n => scroll(animate(n, { y: [26, -26] }, { ease: 'linear' }), { target: n.closest('.sec-head'), offset: ['start end', 'end start'] }));
+  inView('[data-count]', arg => {
+    const el = elOf(arg);
+    const to = +el.dataset.count, dec = +el.dataset.dec, suf = el.dataset.suffix || '';
+    const fmt = v => (dec ? v.toFixed(dec) : Math.round(v).toLocaleString('es-CL')) + suf;
+    animate(0, to, { duration: 1.4, ease: 'easeOut', onUpdate: v => { el.textContent = fmt(v); } });
+  }, { margin: '0px 0px -10% 0px' });
+}
+
+/* ================= arranque ================= */
+function boot() {
+  background(); plates(); nav();
+  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3()];
+  let rt;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
+  tex(document.body);
+  import('https://cdn.jsdelivr.net/npm/motion@11.18.2/+esm').then(motion).catch(() => document.documentElement.classList.remove('pre'));
+  setTimeout(() => document.documentElement.classList.remove('pre'), 2500);
+}
+document.readyState === 'loading' ? addEventListener('DOMContentLoaded', boot) : boot();
+})();

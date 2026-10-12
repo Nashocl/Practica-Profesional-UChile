@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reclutamiento de crisis en Epileptores acoplados · Práctica CMM</title>
+  <meta name="description" content="Práctica profesional en el Centro de Modelamiento Matemático: estudio de la reducción 2D del Epileptor (Proix et al., 2014, ecuación 8) para N=1, N=2 y un grafo dinámico epileptogénico.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <script>document.documentElement.classList.add('pre')</script>
+</head>
+<body>
+<a class="skip" href="#modelo">Saltar al contenido</a>
+<div class="bg" aria-hidden="true">
+  <div class="bg-drift" id="bgDrift">
+    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+  </div>
+  <canvas id="bgNet"></canvas>
+</div>
+<div class="progress" id="progress" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">Práctica <i>CMM</i><span> · Epileptor 2D</span></a>
+    <nav aria-label="Secciones">
+      <ul id="navlist">
+        <li><a href="#modelo">Modelo</a></li>
+        <li><a href="#n1">\(N=1\)</a></li>
+        <li><a href="#n2">\(N=2\)</a></li>
+        <li><a href="#grafo">Grafo</a></li>
+        <li><a href="#guia">Profesor guía</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <div class="wrap">
+    <p class="eyebrow" data-hero>Práctica profesional · Centro de Modelamiento Matemático</p>
+    <h1 data-hero>Cómo una región <em>epileptogénica</em> recluta a una sana</h1>
+    <div class="hero-grid">
+      <p class="lede" data-hero>En esta práctica estudié cómo se propaga una crisis epiléptica en un modelo matemático sencillo: el Epileptor reducido a dos variables, tomado de la ecuación (8) de Proix et al. (2014). Partí con una sola región, seguí con dos regiones acopladas y terminé con una red en la que las crisis pasan de un nodo a otro.</p>
+      <ul class="meta" data-hero>
+        <li><span>Autor</span><span>Ignacio Tobar</span></li>
+        <li><span>Profesor guía</span><span>Joaquín Fontbona</span></li>
+        <li><span>Institución</span><span>CMM · Universidad de Chile</span></li>
+        <li><span>Paper base</span><span>Proix et al., <i>J. Neurosci.</i> 2014</span></li>
+      </ul>
+    </div>
+    <div class="brain" id="brain"><canvas id="brain3d" data-hero role="img" aria-label="Modelo 3D de un cerebro con destellos eléctricos; arrastra para girarlo" title="Arrastra para girar"></canvas></div>
+  </div>
+  <div class="trace" data-hero>
+    <canvas id="heroTrace" aria-label="Traza animada de dos epileptores acoplados" role="img"></canvas>
+  </div>
+</div>
+
+<!-- ============ MODELO ============ -->
+<section id="modelo">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <div class="num">00</div>
+      <div>
+        <h2>El modelo: Epileptor reducido a dos dimensiones</h2>
+        <p>El Epileptor completo tiene cinco variables y tres escalas de tiempo. Promediando las oscilaciones rápidas, Proix et al. lo reducen a una variable de actividad \(x_i\) y una variable lenta de permitividad \(z_i\) por región. Las regiones se comunican solo a través de \(z\).</p>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="eq" data-reveal>
+        <p class="kicker">Ecuación (8) · \(N\) regiones</p>
+        $$\begin{aligned}
+\dot x_i &amp;= -x_i^3 - 2x_i^2 + 1 - z_i + I_1 \\[6pt]
+\dot z_i &amp;= \frac{1}{\tau_0}\Big(h(x_i) - z_i - K\sum_{j=1}^{N}(x_j - x_i)\Big) \\[6pt]
+h(x_i) &amp;= x_{0,i} + \frac{3}{1+\exp\!\big(-(x_i+0.5)/0.1\big)}
+\end{aligned}$$
+        <div class="params">
+          <span class="chip">\(\tau_0 = 2857\)</span><span class="chip">\(I_1 = 3.1\)</span>
+          <span class="chip epi">\(x_0 \lt 2.91\) · epileptogénica</span><span class="chip sano">\(x_0 \gt 2.91\) · sana</span>
+        </div>
+      </div>
+      <div class="prose" data-reveal>
+        <h3>Qué controla cada parámetro</h3>
+        <p><strong>\(x_0\), excitabilidad.</strong> Desplaza la nullclina de \(z\). Bajo el valor crítico \(x_0 \approx 2.91\) no queda ningún equilibrio estable y la región entra sola en ciclos de crisis.</p>
+        <p><strong>\(K\), acoplamiento por permitividad.</strong> Cuando una región vecina está en crisis, el término \(K(x_j - x_i)\) empuja la permitividad de la región \(i\) hacia abajo, como si su \(x_0\) efectivo disminuyera.</p>
+        <p><strong>\(\tau_0\), separación de escalas.</strong> \(z\) evoluciona unas \(2857\) veces más lento que \(x\): el sistema es un oscilador de relajación que salta entre el estado interictal y el ictal.</p>
+        <p class="note">En cada sección me hago la misma pregunta, con más regiones cada vez: cuándo aparece una crisis y cuándo arrastra a una región que por sí sola no la tendría.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ N = 1 ============ -->
+<section id="n1">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <div class="num">01</div>
+      <div>
+        <h2>Caso \(N=1\): una región aislada</h2>
+        <p>Sin acoplamiento, el sistema es plano: \(\dot x = -x^3 - 2x^2 + 1 - z + I_1\), \(\ \dot z = \big(h(x) - z\big)/\tau_0\). Lo que pasa depende de dónde se cruzan las dos nullclinas.</p>
+      </div>
+    </div>
+
+    <div class="lab" id="lab1" data-reveal>
+      <div class="lab-head"><h3>Laboratorio · mueve la excitabilidad</h3><span class="live">Integración RK4 en vivo</span></div>
+      <div class="lab-grid">
+        <div class="controls">
+          <div class="ctl">
+            <label for="l1x0"><span>Excitabilidad \(x_0\)</span> <output id="l1x0o">2.50</output></label>
+            <input type="range" id="l1x0" min="2" max="3.6" step="0.005" value="2.5">
+            <small>El umbral analítico está en \(x_0 \approx 2.91\).</small>
+          </div>
+          <div class="ctl">
+            <div class="lbl"><span>Valores de \(x_0\) estudiados</span></div>
+            <div class="presets" id="l1presets"></div>
+          </div>
+          <dl class="readout" id="l1read"></dl>
+          <div class="table-wrap">
+            <table id="l1fp" aria-label="Puntos fijos para el x0 elegido">
+              <thead><tr><th>\(x^*\)</th><th>\(z^*\)</th><th>\(\max \operatorname{Re}\lambda\)</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="plots two">
+          <div style="display:grid;gap:12px;min-width:0">
+            <div class="plot"><h4>Actividad \(x(t)\)</h4><canvas id="l1x" height="190"></canvas></div>
+            <div class="plot"><h4>Permitividad \(z(t)\)</h4><canvas id="l1z" height="150"></canvas></div>
+          </div>
+          <div class="plot">
+            <h4>Plano de fase \((x, z)\)</h4>
+            <canvas id="l1ph" height="372"></canvas>
+            <div class="legend"><span><i style="background:var(--ink)"></i>\(\dot x = 0\)</span><span><i style="background:var(--sage)"></i>\(\dot z = 0\)</span><span><i style="background:var(--accent)"></i>trayectoria</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3 data-reveal>Resultados</h3>
+      <div class="stats" data-reveal>
+        <div class="stat"><b data-count="2.91" data-dec="2">2.91</b><span>Excitabilidad crítica \(x_0^c\). Bajo ese valor la región hace crisis por sí sola</span></div>
+        <div class="stat"><b data-count="4854" data-dec="0">4854</b><span>Período \(T\) entre una crisis y la siguiente en \(x_0 = 2.0\)</span></div>
+        <div class="stat"><b data-count="20248" data-dec="0">20248</b><span>Período \(T\) en \(x_0 = 2.913\), justo antes de la bifurcación</span></div>
+        <div class="stat"><b data-count="0" data-dec="0">0</b><span>Crisis detectadas para \(x_0 \ge 2.915\)</span></div>
+      </div>
+      <div class="cols" style="margin-top:32px">
+        <ol class="findings" data-reveal>
+          <li><span>Para \(x_0 \in \{2.0,\ 2.5,\ 2.8\}\) hay un solo punto fijo. Está en la rama media de la cúbica y es inestable, con autovalor rápido \(\lambda\) entre \(1.2\) y \(1.3\), así que la región oscila.</span></li>
+          <li><span>Al pasar \(x_0 = 2.91\) aparecen dos equilibrios nuevos. En \(x_0 = 3.0\) hay un nodo estable en \(x^* = -1.53\) y una silla en \(x^* = -1.11\). En \(x_0 = 3.5\) solo queda el nodo estable, en \(x^* = -1.82\).</span></li>
+          <li><span>El período \(T\) crece de unos \(4\,850\) a más de \(20\,000\) unidades de tiempo cuando \(x_0\) se acerca al umbral. Es lo esperable en una bifurcación silla-nodo sobre ciclo invariante (SNIC), que es la que describe el paper.</span></li>
+          <li><span>La amplitud de la oscilación casi no cambia antes del umbral. En el diagrama de bifurcación los máximos de \(x(t)\) se mantienen constantes y luego la oscilación desaparece de golpe.</span></li>
+        </ol>
+        <div class="table-wrap" data-reveal>
+          <table>
+            <thead><tr><th>\(x_0\)</th><th>\((x^*,\ z^*)\)</th><th>Autovalores \(\lambda_{1},\ \lambda_{2}\)</th><th>Estabilidad</th></tr></thead>
+            <tbody>
+              <tr><td>\(2.0\)</td><td>\((-0.4636,\ 3.7697)\)</td><td>\(1.2076,\ \ 0.0018\)</td><td><span class="tag no">inestable</span></td></tr>
+              <tr><td>\(2.5\)</td><td>\((-0.5450,\ 3.6678)\)</td><td>\(1.2870,\ \ 0.0016\)</td><td><span class="tag no">inestable</span></td></tr>
+              <tr><td>\(2.8\)</td><td>\((-0.6024,\ 3.5929)\)</td><td>\(1.3194,\ \ 0.0012\)</td><td><span class="tag no">inestable</span></td></tr>
+              <tr><td>\(3.0\)</td><td>\((-1.5304,\ 3.0001)\)</td><td>\(-0.9046,\ -0.0004\)</td><td><span class="tag ok">estable</span></td></tr>
+              <tr><td>\(3.0\)</td><td>\((-1.1052,\ 3.0070)\)</td><td>\(0.7564,\ -0.0003\)</td><td><span class="tag no">silla</span></td></tr>
+              <tr><td>\(3.0\)</td><td>\((-0.6558,\ 3.5219)\)</td><td>\(1.3318,\ \ 0.0008\)</td><td><span class="tag no">inestable</span></td></tr>
+              <tr><td>\(3.5\)</td><td>\((-1.8186,\ 3.5000)\)</td><td>\(-2.6474,\ -0.0004\)</td><td><span class="tag ok">estable</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Resultados de las simulaciones</p>
+      <h3 data-reveal>Gráficos y resultados, \(N=1\)</h3>
+      <div class="plates" data-plates="n1"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ N = 2 ============ -->
+<section id="n2">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <div class="num">02</div>
+      <div>
+        <h2>Caso \(N=2\): dos regiones acopladas</h2>
+        <p>Ahora el sistema vive en cuatro dimensiones \((x_1, x_2, z_1, z_2)\). Dejé la región 1 como foco y estudié qué hace la región 2 según su excitabilidad \(x_{0,2}\) y el acoplamiento \(K\).</p>
+      </div>
+    </div>
+
+    <div class="cols" style="margin-bottom:28px">
+      <div class="eq" data-reveal>
+        <p class="kicker">Sistema reducido 4D</p>
+        $$\begin{aligned}
+\dot x_1 &amp;= -x_1^3 - 2x_1^2 + 1 - z_1 + I_1 \\[6pt]
+\dot x_2 &amp;= -x_2^3 - 2x_2^2 + 1 - z_2 + I_1 \\[6pt]
+\dot z_1 &amp;= \frac{1}{\tau_0}\Big(h(x_1) - z_1 - K(x_2 - x_1)\Big) \\[6pt]
+\dot z_2 &amp;= \frac{1}{\tau_0}\Big(h(x_2) - z_2 - K(x_1 - x_2)\Big)
+\end{aligned}$$
+      </div>
+      <div class="prose" data-reveal>
+        <h3>Cinco regímenes de coexistencia</h3>
+        <p>Barrí \(41 \times 40\) combinaciones de \((K, x_{0,2})\) con \(x_{0,1} = 2.5\) y aparecen los mismos cinco regímenes de la figura 5A del paper:</p>
+        <div class="params">
+          <span class="chip">I · deriva de fase</span><span class="chip">II · arrastre</span><span class="chip">III · bloqueo \(p{:}q\)</span><span class="chip">IV · sin reclutamiento</span><span class="chip">V · inhibición mutua</span>
+        </div>
+        <p style="margin-top:14px">En el laboratorio, el punto negro sobre el mapa sigue los parámetros elegidos cuando \(x_{0,1} = 2.5\).</p>
+      </div>
+    </div>
+
+    <div class="lab" id="lab2" data-reveal>
+      <div class="lab-head"><h3>Laboratorio · foco + región vecina</h3><span class="live">Integración RK4 en vivo</span></div>
+      <div class="lab-grid">
+        <div class="controls">
+          <div class="ctl">
+            <label for="l2a"><span>\(x_{0,1}\) · región 1</span> <output id="l2ao">2.50</output></label>
+            <input type="range" id="l2a" min="2" max="4" step="0.01" value="2.5">
+          </div>
+          <div class="ctl">
+            <label for="l2b"><span>\(x_{0,2}\) · región 2</span> <output id="l2bo">3.10</output></label>
+            <input type="range" id="l2b" min="2" max="4" step="0.01" value="3.1">
+          </div>
+          <div class="ctl">
+            <label for="l2k"><span>Acoplamiento \(K\)</span> <output id="l2ko">0.40</output></label>
+            <input type="range" id="l2k" min="0" max="4" step="0.01" value="0.4">
+          </div>
+          <div class="ctl">
+            <div class="lbl"><span>Un ejemplo de cada régimen</span></div>
+            <div class="presets" id="l2presets"></div>
+          </div>
+          <dl class="readout" id="l2read"></dl>
+        </div>
+        <div class="plots">
+          <div class="plot"><h4>Actividad \(x_1(t),\ x_2(t)\)</h4><canvas id="l2x" height="180"></canvas>
+            <div class="legend"><span><i style="background:var(--accent)"></i>región 1</span><span><i style="background:var(--sage)"></i>región 2</span></div></div>
+          <div class="plot"><h4>Permitividad \(z_1(t),\ z_2(t)\)</h4><canvas id="l2z" height="140"></canvas></div>
+          <div class="regmap">
+            <div class="regmap-in">
+              <img src="assets/fig/P_59_0.png" alt="Mapa de regímenes I a V en el plano K, x0,2 con x0,1 = 2.5" width="889" height="404" loading="lazy">
+              <span class="pin" id="l2pin" aria-hidden="true"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3 data-reveal>Resultados</h3>
+      <ol class="findings" data-reveal>
+        <li><span>Cuando \(x_{0,1} = x_{0,2}\), el punto fijo es el sincrónico y su estabilidad es la misma que en \(N=1\): inestable en \(2.5\) y \(2.9\), estable en \(3.5\). Lo comprobé para \(K \in \{0.1,\ 0.5,\ 1.0\}\).</span></li>
+        <li><span>Con \(K = 0\), una región con \(x_{0,2} = 3.2\) se queda en reposo. Con \(K = 1.0\) el foco la arrastra y las dos hacen crisis juntas (régimen II).</span></li>
+        <li><span>Si \(x_{0,2} \gtrsim 3.4\) y \(K\) es grande, la región sana inhibe a la epileptogénica y ninguna hace crisis (régimen V). La frontera entre los regímenes II y V queda casi horizontal.</span></li>
+        <li><span>El ruido en \(z\) facilita el reclutamiento. Con \(x_0 = (2.5,\ 3.5)\) y \(\sigma_x = 0.02\), la probabilidad de que la región 2 haga crisis sube con \(\sigma_z\). Para \(K = 0.6\) pasa de \(0\) a cerca de \(0.87\) en \(\sigma_z = 0.003\), y para \(K = 0.9\) es \(1\) en todo el rango.</span></li>
+      </ol>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Laboratorio y figuras</p>
+      <h3 data-reveal>Series de tiempo \(x(t)\), \(z(t)\) y onda rectangular \(h(x(t))\)</h3>
+      <p data-reveal>La permitividad \(z_i\) persigue lentamente a \(h(x_i(t))\), que salta entre \(x_{0,i}\) (reposo) y \(x_{0,i}+3\) (crisis). El acoplamiento desplaza ese objetivo en \(-K(x_j - x_i)\).</p>
+
+      <div class="lab" id="labh" data-reveal style="margin-top:22px">
+        <div class="lab-head"><h3>Laboratorio · \(x(t)\), \(z(t)\) y \(h(x(t))\)</h3><span class="live">Integración RK4 en vivo</span></div>
+        <div class="lab-grid">
+          <div class="controls">
+            <div class="ctl">
+              <label for="lha"><span>\(x_{0,1}\)</span> <output id="lhao">2.50</output></label>
+              <input type="range" id="lha" min="2" max="4" step="0.01" value="2.5">
+            </div>
+            <div class="ctl">
+              <label for="lhb"><span>\(x_{0,2}\)</span> <output id="lhbo">2.50</output></label>
+              <input type="range" id="lhb" min="2" max="4" step="0.01" value="2.5">
+            </div>
+            <div class="ctl">
+              <label for="lhk"><span>Acoplamiento \(K\)</span> <output id="lhko">0.20</output></label>
+              <input type="range" id="lhk" min="0" max="2" step="0.01" value="0.2">
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Pares \((x_{0,1},\ x_{0,2})\) estudiados</span></div>
+              <div class="presets" id="lhpairs"></div>
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Valores de \(K\) estudiados</span></div>
+              <div class="presets" id="lhks"></div>
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Condiciones iniciales</span></div>
+              <div class="seg" id="lhic"><button type="button" data-v="rand" aria-pressed="true">Aleatorias</button><button type="button" data-v="rest" aria-pressed="false">Reposo</button></div>
+              <small>Aleatorias: \(x_i(0)\sim U[-2,2]\), \(z_i(0)\sim U[2,4]\). Reposo: \(x_i(0)=-1.5\), \(z_i(0)=x_{0,i}\).</small>
+            </div>
+            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button type="button" class="btn ghost" id="lhnew">Nuevas C.I.</button>
+              <button type="button" class="btn ghost" id="lhz" aria-pressed="true">\(z\) sobre \(h\)</button>
+            </div>
+          </div>
+          <div class="plots">
+            <div class="plot"><h4>Actividad \(x_1(t),\ x_2(t)\)</h4><canvas id="lhx" height="170"></canvas></div>
+            <div class="plot"><h4>Permitividad \(z_1(t),\ z_2(t)\)</h4><canvas id="lhzc" height="150"></canvas></div>
+            <div class="plot"><h4>Onda rectangular \(h(x_1(t)),\ h(x_2(t))\)</h4><canvas id="lhh" height="170"></canvas>
+              <div class="legend"><span><i style="background:var(--accent)"></i>región 1</span><span><i style="background:var(--sage)"></i>región 2 (discontinua)</span><span><i style="background:var(--ochre)"></i>\(z_i(t)\) superpuesta</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plates" data-plates="n2series"></div>
+    </div>
+
+    <div class="sub">
+      <h3 data-reveal>Mapas de calor y espacio de parámetros</h3>
+      <div class="plates" data-plates="n2maps"></div>
+    </div>
+
+    <div class="sub">
+      <h3 data-reveal>Modelo con ruido (Euler-Maruyama)</h3>
+      <div class="cols" style="margin-bottom:22px">
+        <div class="eq" data-reveal>
+          <p class="kicker">Ecuación estocástica · \(i \in \{1, 2\}\)</p>
+          $$\begin{aligned}
+dx_i &amp;= \big(-x_i^3 - 2x_i^2 + 1 - z_i + I_1\big)\,dt + \sigma_x\, dW_i^{x} \\[6pt]
+dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z\, dW_i^{z}
+\end{aligned}$$
+        </div>
+        <div class="prose" data-reveal>
+          <p>Esquema de Euler-Maruyama con \(\Delta t = 0.1\) y \(T = 50\,000\): en cada paso \(\Delta W \sim \sqrt{\Delta t}\;\mathcal N(0,1)\), independiente para las cuatro variables.</p>
+          <p>La realización del ruido queda fija al cambiar \(\sigma_x\) y \(\sigma_z\), así que se ve la misma trayectoria deformarse de a poco. La curva punteada es el caso determinista \(\sigma_x=\sigma_z=0\).</p>
+        </div>
+      </div>
+
+      <div class="lab" id="labn" data-reveal>
+        <div class="lab-head"><h3>Laboratorio · perturbación por ruido</h3><span class="live">Euler-Maruyama en tiempo real</span></div>
+        <div class="lab-grid">
+          <div class="controls">
+            <div class="ctl">
+              <label for="lnsx"><span>Ruido en actividad \(\sigma_x\)</span> <output id="lnsxo">0.020</output></label>
+              <input type="range" id="lnsx" min="0" max="0.1" step="0.001" value="0.02">
+            </div>
+            <div class="ctl">
+              <label for="lnsz"><span>Ruido en permitividad \(\sigma_z\)</span> <output id="lnszo">0.0040</output></label>
+              <input type="range" id="lnsz" min="0" max="0.012" step="0.0002" value="0.004">
+              <small>En las simulaciones usé \(\sigma_z \in \{0,\ 0.002,\ 0.004,\ 0.008\}\).</small>
+            </div>
+            <div class="ctl">
+              <label for="lnk"><span>Acoplamiento \(K\)</span> <output id="lnko">0.50</output></label>
+              <input type="range" id="lnk" min="0" max="1.5" step="0.01" value="0.5">
+            </div>
+            <div class="ctl">
+              <label for="lna"><span>\(x_{0,1}\) · foco</span> <output id="lnao">2.50</output></label>
+              <input type="range" id="lna" min="2" max="3.2" step="0.01" value="2.5">
+            </div>
+            <div class="ctl">
+              <label for="lnb"><span>\(x_{0,2}\) · región sana</span> <output id="lnbo">3.50</output></label>
+              <input type="range" id="lnb" min="2.9" max="4" step="0.01" value="3.5">
+            </div>
+            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button type="button" class="btn ghost" id="lnnew">Nueva realización</button>
+              <button type="button" class="btn ghost" id="lndet" aria-pressed="true">Ver \(\sigma = 0\)</button>
+            </div>
+            <dl class="readout" id="lnread"></dl>
+          </div>
+          <div class="plots">
+            <div class="plot"><h4>Actividad \(x_1(t),\ x_2(t)\)</h4><canvas id="lnx" height="250"></canvas>
+              <div class="legend"><span><i style="background:var(--accent)"></i>región 1</span><span><i style="background:var(--sage)"></i>región 2</span><span><i style="background:var(--muted)"></i>determinista \(\sigma_x=\sigma_z=0\)</span></div></div>
+            <div class="plot"><h4>Permitividad \(z_1(t),\ z_2(t)\)</h4><canvas id="lnz" height="170"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plates" data-plates="n2noise"></div>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Extensión</p>
+      <h3 data-reveal>¿Cuánto de \(N=2\) sobrevive cuando \(N\) crece?</h3>
+      <p data-reveal>Con acoplamiento todos con todos y \(K = c/N\), comparé poblaciones de \(N\) regiones con el caso de dos.</p>
+      <div class="stats" data-reveal>
+        <div class="stat"><b data-count="0" data-dec="0" data-suffix=" %">0 %</b><span>Celdas del mapa con régimen distinto a \(N=2\), para \(N \in \{4,\ 10,\ 50\}\) (mitad focos, mitad sanas)</span></div>
+        <div class="stat"><b data-count="41.7" data-dec="1" data-suffix=" %">41.7 %</b><span>Discrepancia con \(N=2\) cuando en \(N=10\) hay un solo foco</span></div>
+        <div class="stat"><b>\(10^{-16}\)</b><span>Diferencia entre el autovalor del Jacobiano \(2N\times 2N\) y la teoría longitudinal/transversal</span></div>
+        <div class="stat"><b>\(K\!\cdot\! N \approx 1\)</b><span>Para \(x_0 = 2.5\) el exponente transversal \(\lambda_\perp\) pasa a negativo: la órbita sincrónica se vuelve estable</span></div>
+      </div>
+      <div class="plates" data-plates="n2scale"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ GRAFO ============ -->
+<section id="grafo">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <div class="num">03</div>
+      <div>
+        <h2>Grafo epileptogénico dinámico</h2>
+        <p>Cada región es un nodo con su propia excitabilidad. Construí la matriz de adyacencia \(A\) a partir de \(x_0\), y los pesos \(W_{ij}(t)\) de las aristas cambian con la actividad. Eso permite ver cómo los nodos epileptogénicos se van conectando con los sanos a medida que pasa el tiempo.</p>
+      </div>
+    </div>
+
+    <div class="cols-3" style="margin-bottom:28px">
+      <div class="eq" data-reveal>
+        <p class="kicker">Adyacencia</p>
+        $$A_{ij}=\begin{cases}1 &amp; x_{0,j} \lt x_{0,i},\ i\neq j\\ 0 &amp; \text{en otro caso}\end{cases}$$
+        <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">La región \(i\) recibe de todas las más excitables que ella. Es un supuesto de modelamiento y no representa conectividad cerebral medida.</p>
+      </div>
+      <div class="eq" data-reveal>
+        <p class="kicker">Dinámica en red</p>
+        $$\dot z_i=\frac{1}{\tau_0}\Big[h_i(x_i)-z_i-K\sum_j A_{ij}(x_j-x_i)\Big]$$
+        <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">\(x_j\) aparece en la ecuación de \(i\): la influencia va de \(j\) hacia \(i\).</p>
+      </div>
+      <div class="eq" data-reveal>
+        <p class="kicker">Grafo dinámico</p>
+        $$W_{ij}(t)=K\,A_{ij}\,\lvert x_j(t)-x_i(t)\rvert$$
+        <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Intensidad instantánea del acoplamiento; su integral es la influencia acumulada \(I_{ij}=\int_0^T W_{ij}(t)\,dt\).</p>
+      </div>
+    </div>
+
+    <div class="lab" id="lab3" data-reveal>
+      <div class="lab-head"><h3>Laboratorio · grafo dinámico</h3><span class="live">Simulación en vivo</span></div>
+      <div class="lab-grid">
+        <div class="controls">
+          <div class="ctl">
+            <label for="g-n"><span>Regiones \(N\)</span> <output id="g-no">10</output></label>
+            <input type="range" id="g-n" min="3" max="18" step="1" value="10">
+          </div>
+          <div class="ctl">
+            <label for="g-f"><span>Focos epileptogénicos</span> <output id="g-fo">2</output></label>
+            <input type="range" id="g-f" min="1" max="4" step="1" value="2">
+            <small>\(x_0 \in \{2.3,\ 2.4,\ 2.5,\ 2.2\}\). El resto: \(x_{0,i} \sim U[2.9,\ 3.5]\).</small>
+          </div>
+          <div class="ctl">
+            <label for="g-k"><span>Acoplamiento \(K\)</span> <output id="g-ko">0.10</output></label>
+            <input type="range" id="g-k" min="0" max="0.6" step="0.005" value="0.1">
+          </div>
+          <div class="ctl">
+            <label for="g-s"><span>Semilla de \(x_0\)</span> <output id="g-so">42</output></label>
+            <input type="range" id="g-s" min="1" max="99" step="1" value="42">
+            <small>Con \(N=10\), 2 focos y semilla 42 se usa el vector \(x_0\) del experimento base.</small>
+          </div>
+          <div class="ctl">
+            <div class="lbl"><span>Dirección del grafo</span></div>
+            <div class="seg" id="g-dir"><button type="button" data-v="A" aria-pressed="true">\(A\) (original)</button><button type="button" data-v="AT" aria-pressed="false">\(A^{\mathsf T}\) (transpuesta)</button></div>
+          </div>
+          <div class="ctl">
+            <div class="lbl"><span>Función \(h\) y condición inicial</span></div>
+            <div class="seg" id="g-var"><button type="button" data-v="eq8" aria-pressed="true">Ecuación (8)</button><button type="button" data-v="nb" aria-pressed="false">Variante</button></div>
+            <small id="g-varnote"></small>
+          </div>
+          <dl class="readout" id="g-read"></dl>
+        </div>
+
+        <div class="plots">
+          <div class="plots two">
+            <div class="plot" style="position:relative">
+              <h4>Grafo · grosor \(= W_{ij}(t)\) · relleno \(= x_i(t)\)</h4>
+              <span class="busy" id="g-busy">calculando…</span>
+              <canvas id="g-graph" height="430" aria-label="Grafo dinámico animado" role="img"></canvas>
+              <div class="tip" id="g-tip"></div>
+              <div class="legend"><span><i style="background:var(--accent)"></i>borde: \(x_0 \lt 2.91\)</span><span><i style="background:var(--sage)"></i>borde: \(x_0 \ge 2.91\)</span><span>flecha \(j \to i\): \(j\) influye sobre \(i\)</span></div>
+            </div>
+            <div style="display:grid;gap:12px;align-content:start;min-width:0">
+              <div class="plot"><h4>Matriz \(W_{ij}(t)\)</h4><canvas id="g-mat" height="210"></canvas></div>
+              <div class="plot" style="padding:12px 14px 14px">
+                <h4 style="margin:0 0 10px">Secuencia de reclutamiento \(T_i\)</h4>
+                <ol class="recruit" id="g-rec"></ol>
+              </div>
+            </div>
+          </div>
+          <div class="plot"><h4>\(x_i(t)\) · haz clic para mover el tiempo</h4><canvas id="g-ts" height="170" style="cursor:crosshair"></canvas></div>
+          <div class="timeline">
+            <button class="btn" id="g-play" type="button" aria-label="Reproducir o pausar">
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path id="g-playicon" d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+            </button>
+            <input type="range" id="g-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
+            <output id="g-tout">t = 0</output>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3 data-reveal>Resultados del experimento base \((N=10,\ K=0.1,\ \text{semilla } 42)\)</h3>
+      <div class="stats" data-reveal>
+        <div class="stat"><b data-count="45" data-dec="0">45</b><span>Aristas: el grafo es un torneo transitivo ordenado por \(x_0\)</span></div>
+        <div class="stat"><b data-count="0.987" data-dec="3">0.987</b><span>Correlación de Pearson entre grado de salida \(d_i^{out}\) y hub dinámico \(H^{dyn,out}_i\)</span></div>
+        <div class="stat"><b data-count="303.6" data-dec="1">303.6</b><span>Influencia acumulada entrante \(H^{dyn,in}_0\) del nodo 0 \((x_0 = 2.3)\), la mayor de la red</span></div>
+        <div class="stat"><b data-count="0" data-dec="0">0</b><span>Centralidad de intermediación \(C_B(i)\) de todos los nodos, por lo que no sirve como predictor en este grafo</span></div>
+      </div>
+      <div class="cols" style="margin-top:32px">
+        <ol class="findings" data-reveal>
+          <li><span>Como \(A\) se define a partir de \(x_0\), el grado ordena los nodos igual que la excitabilidad. Por eso el nodo 3, que tiene el mayor grado de salida \((d^{out}_3 = 9)\), es también el de mayor influencia dinámica \((H^{dyn,out}_3 = 182.1)\).</span></li>
+          <li><span>Hay que tener cuidado con la dirección de las flechas. <code>nx.DiGraph(A)</code> dibuja \(i \to j\), pero en la ecuación es \(j\) quien influye sobre \(i\). Por eso comparé \(A\) con \(A^{\mathsf T}\), y el laboratorio dibuja siempre la flecha en el sentido de la influencia.</span></li>
+          <li><span>Los nodos 0 y 1, que son los focos, concentran la influencia entrante: \(H^{dyn,in} = 303.6\) y \(267.8\). En la matriz \(A\) todos los demás nodos apuntan hacia ellos.</span></li>
+        </ol>
+        <div data-reveal>
+          <p class="note"><strong>Sobre la función \(h\) en este experimento.</strong> En el experimento base del grafo usé \(h_i(x) = x_{0,i} - 3 + 3\,\sigma\big((x-0.5)/0.1\big)\) con \(z_i(0)=0\), que es distinta de la ecuación (8). Con esa elección todas las regiones saltan a la rama alta en \(t \approx 1\) y después decaen lentamente. Por eso \(T_i = 1.0\) para los diez nodos y \(R(K) = 1\) incluso con \(K = 0\): el reclutamiento medido corresponde al transitorio inicial y no al acoplamiento. El laboratorio permite comparar las dos variantes. Con la ecuación (8) y reposo inicial sí aparece una cascada que depende de \(K\).</p>
+          <p class="note" style="margin-top:12px"><strong>Trabajo pendiente.</strong> Falta completar la comparación con el modelo de campo medio, las réplicas estadísticas con varias semillas y el estudio de convergencia numérica.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Resultados de las simulaciones</p>
+      <h3 data-reveal>Estructura, series y grafo dinámico</h3>
+      <div class="plates" data-plates="grafo"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PROFESOR GUÍA ============ -->
+<section id="guia">
+  <div class="wrap">
+    <div class="sec-head" data-reveal>
+      <div class="num">04</div>
+      <div>
+        <h2>Profesor guía</h2>
+        <p>Hice esta práctica en el Centro de Modelamiento Matemático, con Joaquín Fontbona como profesor guía.</p>
+      </div>
+    </div>
+    <div class="mentor" data-reveal>
+      <div>
+        <img class="mentor-photo" src="https://idia.uchile.cl/wp-content/uploads/2023/04/fontbona_joaquin_01.jpg" alt="Retrato de Joaquín Fontbona" width="200" height="240" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'mono-mark',textContent:'JF'}))">
+        <p class="kicker">Centro de Modelamiento Matemático · DIM, Universidad de Chile</p>
+        <h3>Joaquín <em>Fontbona</em></h3>
+        <p>Su investigación se centra en probabilidad y procesos estocásticos, teoría ergódica y modelamiento estocástico aplicado a la física y la biología. También trabaja con estadística y aprendizaje automático para procesamiento de señales, teledetección y minería de datos.</p>
+        <p class="thanks">Agradezco al profesor Fontbona por proponer el problema y por el tiempo que dedicó a guiar este trabajo.</p>
+        <a class="btn" href="https://idia.uchile.cl/quienes-somos/joaquin-fontbona/" target="_blank" rel="noopener">Ver perfil en IDIA · U. de Chile</a>
+      </div>
+      <dl>
+        <div><dt>Afiliaciones</dt><dd>Investigador asociado, Centro de Modelamiento Matemático.<br>Profesor Asociado, Departamento de Ingeniería Matemática, Universidad de Chile.</dd></div>
+        <div><dt>Formación</dt><dd>PhD en Matemáticas, Université Pierre et Marie Curie (Paris VI), 2004.<br>Ingeniero Civil Matemático, Universidad de Chile, 1999.</dd></div>
+        <div><dt>Contacto</dt><dd><a href="mailto:fontbona@dim.uchile.cl">fontbona@dim.uchile.cl</a></dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <p><strong>Referencia.</strong> Proix, T., Bartolomei, F., Chauvel, P., Bernard, C., Jirsa, V. K. (2014). Permittivity Coupling across Brain Regions Determines Seizure Recruitment in Partial Epilepsy. <i>The Journal of Neuroscience</i>, 34(45), 15009-15021.</p>
+      <p>Las figuras estáticas salen de las simulaciones en Python hechas durante la práctica. Los laboratorios integran el mismo sistema con RK4 (\(\Delta t = 0.1\)) o Euler-Maruyama directamente en el navegador.</p>
+    </div>
+    <div>
+      <p>Práctica profesional · Centro de Modelamiento Matemático, Universidad de Chile.</p>
+      <p><a href="#top">Volver arriba ↑</a></p>
+    </div>
+  </div>
+</footer>
+
+<dialog class="lightbox" id="lightbox" aria-label="Figura ampliada">
+  <button type="button" aria-label="Cerrar">×</button>
+  <img alt="">
+  <p></p>
+</dialog>
+
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<script defer src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# dependencias: el sitio usa la copia de Three.js que está en sitio/vendor
+node_modules/
+
+# configuración local del editor y del asistente
+.claude/
+
+# el paper tiene derechos de autor; en el README está el enlace a la revista
+Proix_JNS_2014.pdf
+
+# sistema
+.DS_Store
+Thumbs.db
+__pycache__/
+.ipynb_checkpoints/

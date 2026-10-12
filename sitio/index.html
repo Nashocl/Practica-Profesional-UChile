@@ -7,7 +7,7 @@
   <meta name="description" content="Práctica profesional en el Centro de Modelamiento Matemático: estudio de la reducción 2D del Epileptor (Proix et al., 2014, ecuación 8) para N=1, N=2 y un grafo dinámico epileptogénico.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
   <link rel="stylesheet" href="styles.css">
   <script>document.documentElement.classList.add('pre')</script>
@@ -43,7 +43,8 @@
 <div class="hero">
   <div class="wrap">
     <p class="eyebrow" data-hero>Práctica profesional · Centro de Modelamiento Matemático</p>
-    <h1 data-hero>Cómo una región <em>epileptogénica</em> recluta a una sana</h1>
+    <h1 data-hero>Modelo <em>Epileptor</em></h1>
+    <p class="tagline" data-hero>Cómo una región epileptogénica recluta a una sana</p>
     <div class="hero-grid">
       <p class="lede" data-hero>En esta práctica estudié cómo se propaga una crisis epiléptica en un modelo matemático sencillo: el Epileptor reducido a dos variables, tomado de la ecuación (8) de Proix et al. (2014). Partí con una sola región, seguí con dos regiones acopladas y terminé con una red en la que las crisis pasan de un nodo a otro.</p>
       <ul class="meta" data-hero>
@@ -470,7 +471,7 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
           <div class="plot"><h4>\(x_i(t)\) · haz clic para mover el tiempo</h4><canvas id="g-ts" height="170" style="cursor:crosshair"></canvas></div>
           <div class="timeline">
             <button class="btn" id="g-play" type="button" aria-label="Reproducir o pausar">
-              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path id="g-playicon" d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
             </button>
             <input type="range" id="g-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
             <output id="g-tout">t = 0</output>

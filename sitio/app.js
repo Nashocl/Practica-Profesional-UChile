@@ -112,7 +112,7 @@ function frame(g, w, h, xr, yr, o = {}) {
   const X = v => m.l + (v - xr[0]) / (xr[1] - xr[0]) * (w - m.l - m.r);
   const Y = v => h - m.b - (v - yr[0]) / (yr[1] - yr[0]) * (h - m.t - m.b);
   g.clearRect(0, 0, w, h);
-  g.font = '11px "JetBrains Mono", ui-monospace, monospace';
+  g.font = '13.5px KaTeX_Main, "Times New Roman", serif';
   g.lineWidth = 1; g.setLineDash([]);
   g.textAlign = 'right';
   for (const v of ticks(yr, o.ny ?? 4)) {
@@ -630,7 +630,7 @@ function classify(sim, x02) {
 function lab2() {
   const cx = $('#l2x'), cz = $('#l2z'), ia = $('#l2a'), ib = $('#l2b'), ik = $('#l2k'), pin = $('#l2pin');
   const st = { sim: null, p: 1, cur: null, stop: null };
-  function compute() {
+  function compute(animate = false) {
     const a = +ia.value, b = +ib.value, K = +ik.value;
     st.sim = simulate({ x0: [a, b], nbrs: [[1], [0]], K, T: 60000, xi: [-1.5, -1.5], zi: [a, b], every: 30 });
     const r = classify(st.sim, b);
@@ -644,7 +644,7 @@ function lab2() {
     pin.style.top = (35 + (clamp(b, 2, 4) - 2) / 2 * 315) / 404 * 100 + '%';
     pin.classList.toggle('off', Math.abs(a - 2.5) > 0.005);
     st.stop && st.stop();
-    st.stop = tween(900, u => { st.p = u; draw(); });
+    if (animate) st.stop = tween(900, u => { st.p = u; draw(); }); else { st.p = 1; draw(); }
   }
   function one(c, ys, yr, cols) {
     const { g, w, h } = fit(c), s = st.sim, { X, Y, m } = frame(g, w, h, [0, s.T], yr);
@@ -670,15 +670,15 @@ function lab2() {
     });
     c.addEventListener('pointerleave', () => { st.cur = null; draw(); });
   });
-  const go = rafThrottle(compute);
+  const go = rafThrottle(() => compute());
   const u = [bindRange(ia, $('#l2ao'), 2, go), bindRange(ib, $('#l2bo'), 2, go), bindRange(ik, $('#l2ko'), 2, go)];
   [['I', 2.5, 2.2, 0.05], ['II', 2.5, 2.8, 1.5], ['III', 2.5, 3.1, 0.4], ['IV', 2.5, 3.6, 0.3], ['V', 2.5, 3.8, 2.5]].forEach(([n, a, b, K]) => {
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'btn ghost'; btn.textContent = n;
-    btn.onclick = () => { ia.value = a; ib.value = b; ik.value = K; u.forEach(f => f()); compute(); };
+    btn.onclick = () => { ia.value = a; ib.value = b; ik.value = K; u.forEach(f => f()); compute(true); };
     $('#l2presets').append(btn);
   });
-  compute();
+  compute(true);
   return draw;
 }
 
@@ -837,7 +837,10 @@ function labNoise() {
   const go = rafThrottle(compute);
   bindRange(isx, $('#lnsxo'), 3, go); bindRange(isz, $('#lnszo'), 4, go);
   bindRange(ik, $('#lnko'), 2, go); bindRange(ia, $('#lnao'), 2, go); bindRange(ib, $('#lnbo'), 2, go);
-  $('#lnnew').onclick = () => { st.seed++; st.detKey = ''; compute(); };
+  $('#lnnew').onclick = () => {
+    st.seed++; st.detKey = ''; compute();
+    if (M && !reduced) M.animate([cx, cz], { opacity: [0.35, 1] }, { duration: 0.18, ease: 'easeOut' });
+  };
   $('#lndet').onclick = e => { st.showDet = !st.showDet; e.currentTarget.setAttribute('aria-pressed', String(st.showDet)); draw(); };
   hoverSync([cx, cz], st, draw);
   compute();
@@ -945,7 +948,7 @@ function lab3() {
       g.fillStyle = mix(CREAM, ACC, act); g.fill();
       g.lineWidth = st.hover === i ? 4 : 3; g.strokeStyle = epi ? C.accent : C.sage; g.stroke();
       g.fillStyle = act > 0.55 ? '#fff' : C.ink; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.font = `${r > 14 ? 13 : 11}px "JetBrains Mono", monospace`; g.fillText(i, x, y + 0.5); g.textBaseline = 'alphabetic';
+      g.font = `${r > 14 ? 15.5 : 13}px KaTeX_Main, "Times New Roman", serif`; g.fillText(i, x, y + 0.5); g.textBaseline = 'alphabetic';
     }
     if (now !== st.ictal) { st.ictal = now; const el = $('#g-now'); if (el) el.textContent = `${now} / ${N}`; }
   }
@@ -953,7 +956,7 @@ function lab3() {
     const { g, w, h } = fit(cm), s = st.sim, k = st.fr, N = st.x0.length;
     g.clearRect(0, 0, w, h);
     const size = Math.min(w - 30, h - 22), cell = size / N, ox = (w - size) / 2 + 8, oy = 16;
-    g.font = '10px "JetBrains Mono", monospace'; g.fillStyle = C.muted; g.textAlign = 'center';
+    g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.fillStyle = C.muted; g.textAlign = 'center';
     for (let i = 0; i < N; i++) {
       if (N <= 12) { g.fillText(i, ox + (i + .5) * cell, 11); g.fillText(i, ox - 9, oy + (i + .5) * cell + 3); }
       const set = new Set(st.nbrs[i]);
@@ -985,13 +988,16 @@ function lab3() {
       const o = $('#g-tout');
       if (window.katex) katex.render(`t = ${Math.round(t)}`, o, { throwOnError: false }); else o.textContent = 't = ' + Math.round(t);
     }
-    $$('#g-rec li').forEach(li => li.classList.toggle('on', st.Ti[+li.dataset.i] <= t));
+    $$('#g-rec li').forEach(li => {
+      const on = st.Ti[+li.dataset.i] <= t, was = li.classList.contains('on');
+      if (on !== was) { li.classList.toggle('on', on); li.classList.toggle('pop', on && st.playing); }
+    });
   }
   function draw() { if (!st.sim) return; drawGraph(); drawMat(); drawTs(); syncDom(); }
 
   const setPlay = v => {
     st.playing = v;
-    $('#g-playicon').setAttribute('d', v ? 'M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z' : 'M4 2.5v11l9-5.5z');
+    $('#g-play').classList.toggle('is-playing', v);
   };
   let last, acc = 0;
   const loop = now => {
@@ -1126,8 +1132,19 @@ const PLATES = {
 let M = null;   // módulo Motion, si cargó
 function plates() {
   const box = $('#lightbox'), bimg = $('img', box), bcap = $('p', box);
-  $('button', box).onclick = () => box.close();
-  box.addEventListener('click', e => { if (e.target === box) box.close(); });
+  const close = () => {
+    if (!box.open || box.dataset.closing) return;
+    if (!M || reduced) { box.close(); return; }
+    box.dataset.closing = '1';
+    M.animate(box, { opacity: [1, 0], scale: [1, 0.97] }, { duration: 0.15, ease: [0.23, 1, 0.32, 1] }).then(() => {
+      box.close();
+      delete box.dataset.closing;
+      box.style.opacity = ''; box.style.transform = ''; box.style.scale = '';
+    });
+  };
+  $('button', box).onclick = close;
+  box.addEventListener('click', e => { if (e.target === box) close(); });
+  box.addEventListener('cancel', e => { e.preventDefault(); close(); });     // tecla Escape
   $$('[data-plates]').forEach(host => {
     PLATES[host.dataset.plates].forEach((p, idx) => {
       const fig = document.createElement('figure');
@@ -1175,7 +1192,7 @@ function motion(m) {
   const elOf = a => a instanceof Element ? a : a.target;   // v11 entrega la entrada del observer; v12, el elemento
   inView('[data-reveal]', arg => {
     const el = elOf(arg);
-    animate(el, { opacity: [0, 1], y: [28, 0] }, { duration: 0.75, delay: +(el.dataset.delay || 0), ease });
+    animate(el, { opacity: [0, 1], y: [14, 0] }, { duration: 0.5, delay: +(el.dataset.delay || 0), ease });
   }, { margin: '0px 0px -8% 0px' });
   // manchas de color que derivan lentamente y se desplazan con el scroll
   [['.b1', [0, 90, -50, 0], [0, 70, 120, 0], 46], ['.b2', [0, -110, -30, 0], [0, -60, 80, 0], 58], ['.b3', [0, 70, -90, 0], [0, -90, -20, 0], 52]]
@@ -1199,6 +1216,8 @@ function boot() {
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
   tex(document.body);
+  // los ejes de los gráficos usan la tipografía de LaTeX: se redibujan cuando termina de cargar
+  if (document.fonts) document.fonts.load('13px KaTeX_Main').then(() => redraws.forEach(f => f())).catch(() => {});
   import('https://cdn.jsdelivr.net/npm/motion@11.18.2/+esm').then(motion).catch(() => document.documentElement.classList.remove('pre'));
   setTimeout(() => document.documentElement.classList.remove('pre'), 2500);
 }

@@ -12,7 +12,7 @@ El trabajo estudia la reducción a dos variables del Epileptor con acoplamiento 
 
 ## Ver la página
 
-Publicada con GitHub Pages: el enlace aparece en la sección "Deployments" del repositorio una vez que termina el primer despliegue.
+Está publicada con GitHub Pages en https://nashocl.github.io/Practica-Profesional-UChile/
 
 Para verla en tu computador necesitas Python. Desde la carpeta del repositorio:
 

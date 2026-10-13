@@ -12,8 +12,8 @@
   --accent-deep: #8e3a1d;
   --accent-wash: #f3dfd2;
   --ochre: #c58a2a;
-  --nav-bg: #ecd3bb;       /* barra superior: arena tostada, más cálida que el fondo */
-  --nav-line: #d9b596;
+  --nav-bg: #a8462a;       /* barra superior: terracota, el color de acento del sitio */
+  --nav-line: #7f3119;
   --sage: #66754b;        /* salvia: sano */
   --sage-wash: #e4e7d6;
 
@@ -28,7 +28,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 84px; overflow-x: clip; }
+html { scroll-behavior: smooth; scroll-padding-top: 110px; overflow-x: clip; }
 body {
   margin: 0;
   background: var(--bg);
@@ -51,26 +51,26 @@ a:hover { color: var(--accent); }
 .skip:focus { left: 8px; }
 
 /* ---------- barra superior ---------- */
-.progress { position: fixed; inset: 0 0 auto 0; height: 3px; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); z-index: 60; }
+.progress { position: fixed; inset: 0 0 auto 0; height: 3px; background: #f3c57c; transform-origin: 0 50%; transform: scaleX(0); z-index: 60; }
 .nav {
   position: sticky; top: 0; z-index: 50;
-  background: color-mix(in srgb, var(--nav-bg) 90%, transparent);
+  background: color-mix(in srgb, var(--nav-bg) 94%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--nav-line);
   box-shadow: 0 6px 18px -14px rgba(120, 60, 25, .55);
 }
-.nav-in { display: flex; align-items: center; gap: 24px; height: 60px; }
-.brand { font-family: var(--font-display); font-weight: 600; font-size: 18px; color: var(--ink); text-decoration: none; white-space: nowrap; }
-.brand i { color: var(--accent); font-style: italic; font-weight: 400; }
+.nav-in { display: flex; align-items: center; gap: 24px; height: 88px; }
+.brand { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: #fff8ee; text-decoration: none; white-space: nowrap; }
+.brand i { color: #ffd2b8; font-style: italic; font-weight: 400; }
 .nav ul { display: flex; gap: 4px; list-style: none; margin: 0 0 0 auto; padding: 0; overflow-x: auto; scrollbar-width: none; }
 .nav ul::-webkit-scrollbar { display: none; }
 .nav li a {
-  display: block; padding: 10px 14px; border-radius: 999px; white-space: nowrap;
-  color: var(--ink-soft); text-decoration: none; font-size: 14.5px;
+  display: block; padding: 11px 16px; border-radius: 999px; white-space: nowrap;
+  color: #f8e6d8; text-decoration: none; font-size: 17.5px;
   transition: background-color .2s, color .2s;
 }
-.nav li a:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
-.nav li a[aria-current="true"] { background: var(--ink); color: var(--paper); }
+.nav li a:hover { background: rgba(255, 248, 238, .16); color: #fff; }
+.nav li a[aria-current="true"] { background: #fff8ee; color: var(--accent-deep); }
 
 /* ---------- hero ---------- */
 .hero { position: relative; padding: clamp(56px, 10vh, 120px) 0 0; }

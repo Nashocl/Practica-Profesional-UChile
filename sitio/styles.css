@@ -37,7 +37,6 @@ body {
   font-size: 17px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
 }
 img { max-width: 100%; height: auto; display: block; }
 a { color: var(--accent-deep); text-underline-offset: 3px; }
@@ -62,7 +61,8 @@ a:hover { color: var(--accent); }
 .nav-in { display: flex; align-items: center; gap: 24px; height: 88px; }
 .brand { font-family: var(--font-display); font-weight: 600; font-size: 24px; color: #fff8ee; text-decoration: none; white-space: nowrap; }
 .brand i { color: #ffd2b8; font-style: italic; font-weight: 400; }
-.nav ul { display: flex; gap: 4px; list-style: none; margin: 0 0 0 auto; padding: 0; overflow-x: auto; scrollbar-width: none; }
+.nav nav { min-width: 0; margin-left: auto; }      /* sin esto la lista no se encoge y ensancha la página */
+.nav ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
 .nav ul::-webkit-scrollbar { display: none; }
 .nav li a {
   display: block; padding: 11px 16px; border-radius: 999px; white-space: nowrap;

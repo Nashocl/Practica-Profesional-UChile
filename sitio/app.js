@@ -1482,7 +1482,9 @@ function buildGraph3D(T) {
 }
 
 /* ================= láminas de figuras ================= */
-const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap });
+// tamaño en píxeles de cada figura: reserva su espacio antes de que cargue, para que la página no salte
+const FIG_DIM = {"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
+const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap, w: FIG_DIM[id][0], h: FIG_DIM[id][1] });
 const PLATES = {
   n1: [
     { t: 'Permitividad', figs: [F('P_9_0', '', R`Función \(h(x)\) para cinco valores de \(x_0\): un escalón suave de altura \(3\) centrado en \(x = -0.5\) que \(x_0\) desplaza verticalmente.`)] },
@@ -1587,13 +1589,13 @@ function plates() {
       fig.dataset.reveal = ''; fig.dataset.delay = p.wide ? 0 : (idx % 2) * 0.08;
       let cur = 0;
       const tabs = p.figs.length > 1 ? `<div class="plate-tabs" role="tablist">${p.figs.map((f, k) => `<button type="button" role="tab" aria-selected="${k === 0}">${f.label}</button>`).join('')}</div>` : '';
-      fig.innerHTML = `${tabs}<button type="button" class="plate-img" aria-label="Ampliar figura: ${p.t}"><img loading="lazy" alt="Figura: ${p.t}" src="${p.figs[0].src}"></button><figcaption><b>${p.t}</b><span>${p.figs[0].cap}</span></figcaption>`;
+      fig.innerHTML = `${tabs}<button type="button" class="plate-img" aria-label="Ampliar figura: ${p.t}"><img loading="lazy" alt="Figura: ${p.t}" src="${p.figs[0].src}" width="${p.figs[0].w}" height="${p.figs[0].h}"></button><figcaption><b>${p.t}</b><span>${p.figs[0].cap}</span></figcaption>`;
       const img = $('img', fig), cap = $('figcaption span', fig);
       $$('.plate-tabs button', fig).forEach((b, k) => b.onclick = () => {
         if (k === cur) return;
         const dirn = k > cur ? 1 : -1; cur = k;
         $$('.plate-tabs button', fig).forEach((o, q) => o.setAttribute('aria-selected', String(q === k)));
-        img.src = p.figs[k].src; cap.innerHTML = p.figs[k].cap; tex(cap);
+        img.width = p.figs[k].w; img.height = p.figs[k].h; img.src = p.figs[k].src; cap.innerHTML = p.figs[k].cap; tex(cap);
         if (M && !reduced) M.animate(img, { opacity: [0, 1], x: [14 * dirn, 0] }, { duration: 0.35, ease: [0.22, 1, 0.36, 1] });
       });
       $('.plate-img', fig).onclick = () => {
@@ -1610,7 +1612,12 @@ function plates() {
 function nav() {
   const links = $$('#navlist a'), map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
   const io = new IntersectionObserver(es => es.forEach(e => {
-    if (e.isIntersecting) links.forEach(a => a.setAttribute('aria-current', String(a === map.get(e.target.id))));
+    if (!e.isIntersecting) return;
+    const cur = map.get(e.target.id), ul = $('#navlist');
+    links.forEach(a => a.setAttribute('aria-current', String(a === cur)));
+    // en pantallas angostas la lista se desplaza sola para que el enlace activo quede a la vista
+    const li = cur.parentElement;
+    ul.scrollTo({ left: li.offsetLeft - ul.offsetLeft - (ul.clientWidth - li.offsetWidth) / 2, behavior: reduced ? 'auto' : 'smooth' });
   }), { rootMargin: '-45% 0px -50% 0px' });
   map.forEach((_, id) => io.observe(document.getElementById(id)));
 }

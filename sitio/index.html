@@ -481,96 +481,6 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
     </div>
 
     <div class="sub">
-      <p class="kicker" data-reveal>Últimos avances</p>
-      <h3 data-reveal>Grafo dinámico en 3D</h3>
-      <div class="cols" style="margin-bottom:22px">
-        <div class="eq" data-reveal>
-          <p class="kicker">Encaje de cada región en el espacio de fases</p>
-          $$\varphi_t(i) = \big(x_i(t),\ z_i(t),\ x_{0,i}\big)$$
-          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Cada nodo \(i\) se ubica en el punto \(\varphi_t(i)\in\mathbb R^3\). Las dos primeras coordenadas cambian con la dinámica y la tercera, la excitabilidad, queda fija.</p>
-        </div>
-        <div class="prose" data-reveal>
-          <p>Cada región del Epileptor tiene tres coordenadas naturales: su actividad \(x_i(t)\), su permitividad \(z_i(t)\) y su excitabilidad \(x_{0,i}\). Al usarlas como ejes, los nodos se mueven con la dinámica y las aristas cambian de grosor y color según \(W_{ij}(t)\).</p>
-          <p>Las aristas van de \(j\) hacia \(i\), es decir, de la región que influye a la que recibe. El modelo tiene tres vistas: el espacio de fases, el grafo estructural con \(x_{0,i}\) como altura y las capas temporales, donde cada piso es el grafo en un instante.</p>
-        </div>
-      </div>
-
-      <div class="lab" id="lab3d" data-reveal>
-        <div class="lab-head"><h3>Laboratorio · grafo dinámico 3D</h3><span class="live">Three.js en vivo</span></div>
-        <div class="lab-grid">
-          <div class="controls">
-            <div class="ctl">
-              <div class="lbl"><span>Vista</span></div>
-              <div class="seg three" id="g3-mode">
-                <button type="button" data-v="fases" aria-pressed="true">Fases</button>
-                <button type="button" data-v="estructura" aria-pressed="false">Estructura</button>
-                <button type="button" data-v="capas" aria-pressed="false">Capas</button>
-              </div>
-              <small id="g3-modenote"></small>
-            </div>
-            <div class="ctl">
-              <label for="g3-n"><span>Regiones \(N\)</span> <output id="g3-no">10</output></label>
-              <input type="range" id="g3-n" min="4" max="16" step="1" value="10">
-            </div>
-            <div class="ctl">
-              <label for="g3-k"><span>Acoplamiento \(K\)</span> <output id="g3-ko">0.10</output></label>
-              <input type="range" id="g3-k" min="0" max="0.6" step="0.005" value="0.1">
-            </div>
-            <div class="ctl">
-              <div class="lbl"><span>Función \(h\) y condición inicial</span></div>
-              <div class="seg" id="g3-var"><button type="button" data-v="eq8" aria-pressed="true">Ecuación (8)</button><button type="button" data-v="nb" aria-pressed="false">Variante</button></div>
-            </div>
-            <div class="ctl" id="g3-capas" hidden>
-              <label for="g3-layers"><span>Número de capas</span> <output id="g3-layerso">5</output></label>
-              <input type="range" id="g3-layers" min="3" max="9" step="1" value="5">
-              <label for="g3-pct" style="margin-top:12px"><span>Umbral de aristas (percentil)</span> <output id="g3-pcto">60</output></label>
-              <input type="range" id="g3-pct" min="0" max="90" step="5" value="60">
-              <small>En cada capa se dibujan solo las aristas con \(W_{ij}\) sobre ese percentil.</small>
-            </div>
-            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <button type="button" class="btn ghost" id="g3-trails" aria-pressed="true">Trayectorias</button>
-              <button type="button" class="btn ghost" id="g3-spin" aria-pressed="true">Giro automático</button>
-            </div>
-            <dl class="readout" id="g3-read"></dl>
-          </div>
-
-          <div class="plots">
-            <div class="plot g3-view" id="g3-view">
-              <h4 id="g3-title">Espacio de fases \(\varphi_t(i)\)</h4>
-              <span class="busy" id="g3-busy">calculando…</span>
-              <div class="g3-stage" id="g3-stage">
-                <canvas id="g3-canvas" role="img" aria-label="Grafo dinámico en tres dimensiones; arrastra para girar la vista" title="Arrastra para girar"></canvas>
-                <div class="g3-labels" id="g3-labels" aria-hidden="true">
-                  <span data-ax="0"></span><span data-ax="1"></span><span data-ax="2"></span>
-                </div>
-                <div class="tip" id="g3-tip"></div>
-                <div class="g3-zoom">
-                  <button type="button" class="btn ghost" id="g3-zin" aria-label="Acercar">+</button>
-                  <button type="button" class="btn ghost" id="g3-zout" aria-label="Alejar">−</button>
-                  <button type="button" class="btn ghost" id="g3-reset">Vista inicial</button>
-                </div>
-              </div>
-              <div class="legend">
-                <span id="g3-leg-nodes"><i style="background:var(--accent)"></i>nodo: \(x_0 \lt 2.91\) &nbsp; <i style="background:var(--sage)"></i>nodo: \(x_0 \ge 2.91\)</span>
-                <span id="g3-leg-act" hidden><i class="g3-ramp act"></i>nodo: \(x_i(t)\) de reposo a crisis</span>
-                <span><i class="g3-ramp"></i>arista: \(W_{ij}(t)\) de menor a mayor</span>
-              </div>
-            </div>
-            <div class="timeline">
-              <button class="btn playbtn" id="g3-play" type="button" aria-label="Reproducir o pausar">
-                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
-              </button>
-              <input type="range" id="g3-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
-              <output id="g3-tout">t = 0</output>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="plates" data-plates="grafo3d"></div>
-    </div>
-
-    <div class="sub">
       <h3 data-reveal>Resultados del experimento base \((N=10,\ K=0.1,\ \text{semilla } 42)\)</h3>
       <div class="stats" data-reveal>
         <div class="stat"><b data-count="45" data-dec="0">45</b><span>Aristas: el grafo es un torneo transitivo ordenado por \(x_0\)</span></div>
@@ -596,6 +506,114 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
       <p class="kicker" data-reveal>Resultados de las simulaciones</p>
       <h3 data-reveal>Estructura, series y grafo dinámico</h3>
       <div class="plates" data-plates="grafo"></div>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Últimos avances</p>
+      <h3 data-reveal>Grafo dinámico en 3D</h3>
+      <div class="cols" style="margin-bottom:22px">
+        <div class="eq" data-reveal>
+          <p class="kicker">Coordenadas de cada región</p>
+          $$\varphi_t(i) = \big(x_i(t),\ z_i(t),\ x_{0,i}\big)$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Cada nodo \(i\) tiene tres coordenadas naturales. Las dos primeras cambian con la dinámica y la tercera, la excitabilidad, queda fija.</p>
+        </div>
+        <div class="prose" data-reveal>
+          <p>El grafo se dibuja en tres dimensiones usando la excitabilidad \(x_{0,i}\) como altura, de modo que los focos quedan abajo y las regiones sanas arriba. Igual que en la versión plana, el grosor de cada arista es \(W_{ij}(t)\), el relleno del nodo es su actividad \(x_i(t)\) y la flecha va de \(j\) hacia \(i\).</p>
+          <p>La vista de capas apila el mismo grafo en varios instantes, con el tiempo como eje vertical. La vista de fases ubica cada nodo en \(\varphi_t(i)\).</p>
+        </div>
+      </div>
+
+      <div class="lab" id="lab3d" data-reveal>
+        <div class="lab-head"><h3>Laboratorio · grafo dinámico 3D</h3><span class="live">Three.js en vivo</span></div>
+        <div class="lab-grid">
+          <div class="controls">
+            <div class="ctl">
+              <div class="lbl"><span>Vista</span></div>
+              <div class="seg three" id="g3-mode">
+                <button type="button" data-v="estructura" aria-pressed="true">Estructura</button>
+                <button type="button" data-v="capas" aria-pressed="false">Capas</button>
+                <button type="button" data-v="fases" aria-pressed="false">Fases</button>
+              </div>
+              <small id="g3-modenote"></small>
+            </div>
+            <div class="ctl">
+              <label for="g3-n"><span>Regiones \(N\)</span> <output id="g3-no">10</output></label>
+              <input type="range" id="g3-n" min="3" max="18" step="1" value="10">
+            </div>
+            <div class="ctl">
+              <label for="g3-f"><span>Focos epileptogénicos</span> <output id="g3-fo">2</output></label>
+              <input type="range" id="g3-f" min="1" max="4" step="1" value="2">
+            </div>
+            <div class="ctl">
+              <label for="g3-k"><span>Acoplamiento \(K\)</span> <output id="g3-ko">0.10</output></label>
+              <input type="range" id="g3-k" min="0" max="0.6" step="0.005" value="0.1">
+            </div>
+            <div class="ctl">
+              <label for="g3-s"><span>Semilla de \(x_0\)</span> <output id="g3-so">42</output></label>
+              <input type="range" id="g3-s" min="1" max="99" step="1" value="42">
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Dirección del grafo</span></div>
+              <div class="seg" id="g3-dir"><button type="button" data-v="A" aria-pressed="true">\(A\) (original)</button><button type="button" data-v="AT" aria-pressed="false">\(A^{\mathsf T}\) (transpuesta)</button></div>
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Función \(h\) y condición inicial</span></div>
+              <div class="seg" id="g3-var"><button type="button" data-v="eq8" aria-pressed="true">Ecuación (8)</button><button type="button" data-v="nb" aria-pressed="false">Variante</button></div>
+            </div>
+            <div class="ctl" id="g3-capas" hidden>
+              <label for="g3-layers"><span>Número de capas</span> <output id="g3-layerso">5</output></label>
+              <input type="range" id="g3-layers" min="3" max="9" step="1" value="5">
+              <label for="g3-pct" style="margin-top:12px"><span>Umbral de aristas (percentil)</span> <output id="g3-pcto">60</output></label>
+              <input type="range" id="g3-pct" min="0" max="90" step="5" value="60">
+              <small>En cada capa se dibujan solo las aristas con \(W_{ij}\) sobre ese percentil.</small>
+            </div>
+            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button type="button" class="btn ghost" id="g3-spin" aria-pressed="true">Giro automático</button>
+              <button type="button" class="btn ghost" id="g3-trails" aria-pressed="true">Trayectorias</button>
+            </div>
+            <dl class="readout" id="g3-read"></dl>
+          </div>
+
+          <div class="plots">
+            <div class="plots two">
+              <div class="plot g3-view" id="g3-view">
+                <h4 id="g3-title">Grafo 3D · grosor \(= W_{ij}(t)\) · relleno \(= x_i(t)\)</h4>
+                <span class="busy" id="g3-busy">calculando…</span>
+                <div class="g3-stage" id="g3-stage">
+                  <canvas id="g3-canvas" role="img" aria-label="Grafo dinámico en tres dimensiones; arrastra para girar la vista" title="Arrastra para girar"></canvas>
+                  <div class="g3-labels" id="g3-labels" aria-hidden="true">
+                    <span data-ax="0"></span><span data-ax="1"></span><span data-ax="2"></span>
+                  </div>
+                  <div class="tip" id="g3-tip"></div>
+                  <div class="g3-zoom">
+                    <button type="button" class="btn ghost" id="g3-zin" aria-label="Acercar">+</button>
+                    <button type="button" class="btn ghost" id="g3-zout" aria-label="Alejar">−</button>
+                    <button type="button" class="btn ghost" id="g3-reset">Vista inicial</button>
+                  </div>
+                </div>
+                <div class="legend"><span><i style="background:var(--accent)"></i>borde: \(x_0 \lt 2.91\)</span><span><i style="background:var(--sage)"></i>borde: \(x_0 \ge 2.91\)</span><span>flecha \(j \to i\): \(j\) influye sobre \(i\)</span></div>
+              </div>
+              <div style="display:grid;gap:12px;align-content:start;min-width:0">
+                <div class="plot"><h4>Matriz \(W_{ij}(t)\)</h4><canvas id="g3-mat" height="210"></canvas></div>
+                <div class="plot" style="padding:12px 14px 14px">
+                  <h4 style="margin:0 0 10px">Secuencia de reclutamiento \(T_i\)</h4>
+                  <ol class="recruit" id="g3-rec"></ol>
+                </div>
+              </div>
+            </div>
+            <div class="plot"><h4>\(x_i(t)\) · haz clic para mover el tiempo</h4><canvas id="g3-ts" height="170" style="cursor:crosshair"></canvas></div>
+            <div class="timeline">
+              <button class="btn playbtn" id="g3-play" type="button" aria-label="Reproducir o pausar">
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
+              </button>
+              <input type="range" id="g3-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
+              <output id="g3-tout">t = 0</output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plates" data-plates="grafo3d"></div>
     </div>
   </div>
 </section>

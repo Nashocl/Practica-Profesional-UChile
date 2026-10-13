@@ -962,7 +962,7 @@ function lab3() {
     const size = Math.min(w - 30, h - 22), cell = size / N, ox = (w - size) / 2 + 8, oy = 16;
     g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.fillStyle = C.muted; g.textAlign = 'center';
     for (let i = 0; i < N; i++) {
-      if (N <= 12) { g.fillText(i, ox + (i + .5) * cell, 11); g.fillText(i, ox - 9, oy + (i + .5) * cell + 3); }
+      if (N <= 12) { g.fillStyle = C.muted; g.fillText(i, ox + (i + .5) * cell, 11); g.fillText(i, ox - 9, oy + (i + .5) * cell + 3); }
       const set = new Set(st.nbrs[i]);
       for (let j = 0; j < N; j++) {
         const u = set.has(j) && st.wmax > 0 ? st.K * Math.abs(s.x[j][k] - s.x[i][k]) / st.wmax : 0;
@@ -1089,13 +1089,61 @@ function springLayout(N, edges, seed) {
   return P.map(p => [(p[0] - x0) / wx * 2 - 1, (p[1] - y0) / wy * 2 - 1]);
 }
 
+// ---- paneles planos que acompañan al grafo 3D: los mismos de la versión 2D
+function drawWMatrix(c, st) {
+  const { g, w, h } = fit(c), s = st.sim, k = st.fr, N = st.x0.length;
+  g.clearRect(0, 0, w, h);
+  const size = Math.min(w - 30, h - 22), cell = size / N, ox = (w - size) / 2 + 8, oy = 16;
+  g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.fillStyle = C.muted; g.textAlign = 'center';
+  for (let i = 0; i < N; i++) {
+    if (N <= 12) { g.fillStyle = C.muted; g.fillText(i, ox + (i + .5) * cell, 11); g.fillText(i, ox - 9, oy + (i + .5) * cell + 3); }
+    const set = new Set(st.nbrs[i]);
+    for (let j = 0; j < N; j++) {
+      const u = set.has(j) && st.wmax > 0 ? st.K * Math.abs(s.x[j][k] - s.x[i][k]) / st.wmax : 0;
+      g.fillStyle = set.has(j) ? mix([240, 230, 214], ACC, u) : '#faf5ec';
+      if (st.hover === i || st.hover === j) g.globalAlpha = 1; else g.globalAlpha = st.hover < 0 ? 1 : 0.35;
+      g.fillRect(ox + j * cell + .5, oy + i * cell + .5, cell - 1, cell - 1);
+    }
+  }
+  g.globalAlpha = 1;
+}
+function drawNodeSeries(c, st) {
+  const { g, w, h } = fit(c), s = st.sim, N = st.x0.length;
+  const { X, Y, m } = frame(g, w, h, [0, s.T], [-2.2, 1.6]);
+  g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(st.th)); g.lineTo(w - 10, Y(st.th)); g.stroke(); g.setLineDash([]);
+  for (let i = N - 1; i >= 0; i--) {
+    const epi = st.x0[i] < X0C, on = st.hover < 0 || st.hover === i;
+    path(g, X, Y, s.t, s.x[i]); stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .6) : .12), epi || st.hover === i ? 1.9 : 1.1);
+  }
+  const px = X(s.t[st.fr]);
+  g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+  dot(g, px, m.t, 4, C.ink);
+}
+function recruitTimes(sim, th) {            // primer cruce sostenido (≥ 50 unidades de tiempo) sobre el umbral
+  return sim.x.map(x => {
+    let s = -1;
+    for (let k = 0; k < sim.n; k++) {
+      if (x[k] > th) { if (s < 0) s = k; if (sim.t[k] - sim.t[s] >= 50) return sim.t[s]; } else s = -1;
+    }
+    return Infinity;
+  });
+}
+function recruitList(el, st) {
+  const { x0, Ti, sim } = st, order = x0.map((v, i) => i).sort((a, b) => Ti[a] - Ti[b] || a - b);
+  el.innerHTML = order.map(i =>
+    `<li data-i="${i}" class="${x0[i] < X0C ? 'epi' : ''}"><span class="dot">${i}</span><span>${R`\(${x0[i].toFixed(2)}\)`}</span>` +
+    `<span class="bar"><i style="width:${isFinite(Ti[i]) ? Math.max(2, Ti[i] / sim.T * 100) : 0}%"></i></span>` +
+    `<span>${isFinite(Ti[i]) ? R`\(${Math.round(Ti[i])}\)` : R`\(\infty\)`}</span></li>`).join('');
+  tex(el);
+}
+
 function buildGraph3D(T) {
-  const canvas = $('#g3-canvas'), stage = $('#g3-stage'), tip = $('#g3-tip'), busy = $('#g3-busy');
-  const iN = $('#g3-n'), iK = $('#g3-k'), iT = $('#g3-time'), iL = $('#g3-layers'), iP = $('#g3-pct');
+  const canvas = $('#g3-canvas'), stage = $('#g3-stage'), tip = $('#g3-tip'), busy = $('#g3-busy'), cm = $('#g3-mat'), ct = $('#g3-ts'), rec = $('#g3-rec');
+  const iN = $('#g3-n'), iF = $('#g3-f'), iK = $('#g3-k'), iS = $('#g3-s'), iT = $('#g3-time'), iL = $('#g3-layers'), iP = $('#g3-pct');
   const axLab = $$('#g3-labels > span');
-  const S = { x: 1.35, y: 0.9, z: 1.05 }, TRAIL = 220, VIEW = { yaw: -0.85, pitch: 0.36, dist: 5.4 };
-  const st = { mode: 'fases', variant: 'eq8', sim: null, x0: [], nbrs: [], edges: [], lay: [], fr: 0, playing: !reduced, trails: true, spin: !reduced,
-    ...VIEW, hover: -1, wmax: 0, K: 0.1, th: -0.5, xr: [-2, 1], zr: [2, 5], x0r: [2, 4], vis: false, blend: 1, from: null, tipKey: '', tshown: -1, drag: false };
+  const S = { x: 1.35, y: 0.9, z: 1.05 }, TRAIL = 220, VIEW = { yaw: -0.85, pitch: 0.36, dist: 5.6 };
+  const st = { mode: 'estructura', dir: 'A', variant: 'eq8', sim: null, x0: [], nbrs: [], edges: [], Ti: [], lay: [], fr: 0, playing: !reduced, trails: true, spin: !reduced,
+    ...VIEW, hover: -1, wmax: 0, K: 0.1, th: -0.5, xr: [-2, 1], zr: [2, 5], x0r: [2, 4], vis: false, blend: 1, from: null, tipKey: '', tshown: -1, drag: false, phase: 0, fit: 1 };
 
   const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -1116,13 +1164,15 @@ function buildGraph3D(T) {
   grid.geometry.setAttribute('position', new T.Float32BufferAttribute(gridPts, 3));
   scene.add(grid);
 
-  const EPI = new T.Color('#b4502c'), SANO = new T.Color('#66754b'), REST = new T.Color('#d3c7b3');
-  const RAMP = [[0, new T.Color('#d8c8b0')], [0.35, new T.Color('#c58a2a')], [0.7, new T.Color('#b4502c')], [1, new T.Color('#5e1524')]];
-  const ramp = (w, out) => {
-    for (let q = 1; q < RAMP.length; q++) if (w <= RAMP[q][0]) return out.copy(RAMP[q - 1][1]).lerp(RAMP[q][1], (w - RAMP[q - 1][0]) / (RAMP[q][0] - RAMP[q - 1][0]));
-    return out.copy(RAMP[RAMP.length - 1][1]);
-  };
+  // mismos colores que la versión 2D: borde por tipo de región, relleno por actividad, arista por origen
+  const EPI = new T.Color('#b4502c'), SANO = new T.Color('#66754b'), CREAMc = new T.Color('#fffdf9'), BROWN = new T.Color('rgb(140,112,84)');
   const sphereGeo = new T.SphereGeometry(1, 24, 16), cylGeo = new T.CylinderGeometry(1, 1, 1, 8, 1, true), coneGeo = new T.ConeGeometry(1, 1, 10);
+  const ringTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.strokeStyle = '#fff'; g.lineWidth = 13; g.beginPath(); g.arc(64, 64, 54, 0, 6.2832); g.stroke();
+    return new T.CanvasTexture(c);
+  })();
   const shared = new Set([sphereGeo, cylGeo, coneGeo]);
   const gDyn = new T.Group(), gLay = new T.Group();
   scene.add(gDyn, gLay);
@@ -1130,12 +1180,13 @@ function buildGraph3D(T) {
     for (const o of [...g.children]) {
       g.remove(o);
       if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose();
-      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+      if (o.material) { if (o.material.map && o.material.map !== ringTex) o.material.map.dispose(); o.material.dispose(); }
     }
   };
-  let nodes = [], labels = [], edgeObj = [], trails = [], plane = null;
+  const ring = (color, opacity = 1) => new T.Sprite(new T.SpriteMaterial({ map: ringTex, color, transparent: true, opacity, depthWrite: false }));
+  let nodes = [], rings = [], halos = [], labels = [], edgeObj = [], trails = [], plane = null;
   const P = [], UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), dn = new T.Vector3(), v3 = new T.Vector3(), col = new T.Color();
-  const nrm = (v, r) => (v - r[0]) / (r[1] - r[0]) * 2 - 1;
+  const nrm = (v, r) => (v - r[0]) / (r[1] - r[0]) * 2 - 1, activity = x => clamp((x + 1.4) / 1.7, 0, 1);
 
   function numSprite(n) {
     const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -1149,37 +1200,39 @@ function buildGraph3D(T) {
 
   // ---- simulación y objetos
   function build() {
-    const N = +iN.value, K = +iK.value, eq8 = st.variant === 'eq8';
+    const N = +iN.value, F = Math.min(+iF.value, N - 1), seed = +iS.value, K = +iK.value, eq8 = st.variant === 'eq8';
     let x0 = NB_X0.slice();
-    if (N !== 10) { const r = mulberry32(42); x0 = Array.from({ length: N }, (_, i) => i < 2 ? [2.3, 2.4][i] : 2.9 + 0.6 * r()); }
-    const nbrs = x0.map((xi, i) => x0.map((_, j) => j).filter(j => j !== i && x0[j] < xi));
+    if (!(N === 10 && F === 2 && seed === 42)) { const r = mulberry32(seed), foci = [2.3, 2.4, 2.5, 2.2]; x0 = Array.from({ length: N }, (_, i) => i < F ? foci[i] : 2.9 + 0.6 * r()); }
+    const nbrs = x0.map((xi, i) => x0.map((_, j) => j).filter(j => j !== i && (st.dir === 'A' ? x0[j] < xi : x0[j] > xi)));
     const sim = simulate(eq8
       ? { x0, nbrs, K, T: 20000, xi: x0.map(() => -1.5), zi: x0.slice(), h: hEq8, every: 100 }
       : { x0, nbrs, K, T: 5000, xi: x0.map(() => -1), zi: x0.map(() => 0), h: hNb, every: 25 });
-    const edges = [];
+    const edges = [], th = eq8 ? -0.5 : 1.0;
     nbrs.forEach((nb, i) => nb.forEach(j => edges.push([i, j])));          // [i, j]: j influye sobre i
     let wmax = 0;
     for (const [i, j] of edges) for (let k = 0; k < sim.n; k += 2) wmax = Math.max(wmax, K * Math.abs(sim.x[j][k] - sim.x[i][k]));
-    Object.assign(st, { sim, x0, nbrs, edges, wmax, K, th: eq8 ? -0.5 : 1.0, xr: span(sim.x, 0.15), zr: span(sim.z, 0.15),
+    const Ti = recruitTimes(sim, th);
+    Object.assign(st, { sim, x0, nbrs, edges, Ti, wmax, K, th, xr: span(sim.x, 0.15), zr: span(sim.z, 0.15),
       x0r: [Math.min(...x0) - 0.1, Math.max(...x0) + 0.1], lay: springLayout(N, edges, 42), blend: 1, from: null, tshown: -1, tipKey: '' });
     if (st.fr > sim.n - 1) st.fr = 0;
     iT.max = sim.n - 1;
 
     clear(gDyn);
-    const r = N > 12 ? 0.062 : 0.075;
+    const r = N > 12 ? 0.064 : 0.078;
     nodes = x0.map((v, i) => {
-      const c = v < X0C ? EPI : SANO;
-      const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0, roughness: 0.45 }));
-      m.userData = { i, r };
+      const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.5 }));
+      m.userData = { i, r }; m.scale.setScalar(r);
       gDyn.add(m);
       return m;
     });
+    rings = x0.map(v => { const s = ring(v < X0C ? EPI : SANO); s.scale.setScalar(r * 3.1); gDyn.add(s); return s; });
+    halos = x0.map(() => { const s = ring(EPI, 0.35); gDyn.add(s); return s; });
     labels = x0.map((_, i) => { const s = numSprite(i); gDyn.add(s); return s; });
-    edgeObj = edges.map(() => {
-      const mat = new T.MeshBasicMaterial({ transparent: true, depthWrite: false });
-      const cyl = new T.Mesh(cylGeo, mat), cone = new T.Mesh(coneGeo, mat);
-      gDyn.add(cyl, cone);
-      return { cyl, cone, mat };
+    edgeObj = edges.map(([, j]) => {
+      const mat = new T.MeshBasicMaterial({ color: x0[j] < X0C ? EPI : BROWN, transparent: true, depthWrite: false });
+      const cyl = new T.Mesh(cylGeo, mat), cone = new T.Mesh(coneGeo, mat), pulse = new T.Mesh(sphereGeo, new T.MeshBasicMaterial({ color: x0[j] < X0C ? EPI : BROWN }));
+      gDyn.add(cyl, cone, pulse);
+      return { cyl, cone, pulse, mat };
     });
     trails = x0.map(v => {
       const geo = new T.BufferGeometry();
@@ -1191,9 +1244,16 @@ function buildGraph3D(T) {
     });
     P.length = 0;
     x0.forEach(() => P.push(new T.Vector3()));
+
+    const healthy = x0.map((v, i) => i).filter(i => x0[i] >= X0C), recd = healthy.filter(i => isFinite(Ti[i]));
+    const firstH = recd.length ? Math.min(...recd.map(i => Ti[i])) : NaN;
     $('#g3-read').innerHTML =
-      `<div><dt>Aristas</dt><dd>${edges.length}</dd></div><div><dt>En crisis ahora</dt><dd id="g3-now">0</dd></div>` +
-      `<div><dt>Arista más intensa</dt><dd id="g3-top">—</dd></div>`;
+      `<div><dt>Aristas</dt><dd>${edges.length}</dd></div>` +
+      `<div><dt>Sanas reclutadas ${R`\(R\)`}</dt><dd class="epi">${healthy.length ? (recd.length / healthy.length).toFixed(2) : '—'}</dd></div>` +
+      `<div><dt>Primera sana</dt><dd>${isFinite(firstH) ? R`\(t = ${Math.round(firstH)}\)` : '—'}</dd></div>` +
+      `<div><dt>En crisis ahora</dt><dd id="g3-now">0</dd></div>`;
+    tex($('#g3-read'));
+    recruitList(rec, st);
     buildLayers();
   }
 
@@ -1206,15 +1266,16 @@ function buildGraph3D(T) {
   // ---- capas temporales: el grafo en n instantes, apilado según t
   function buildLayers() {
     clear(gLay);
-    const s = st.sim, N = st.x0.length, n = +iL.value, pct = +iP.value;
+    const s = st.sim, N = st.x0.length, n = +iL.value, pct = +iP.value, r = N > 12 ? 0.046 : 0.054;
     const ks = Array.from({ length: n }, (_, q) => Math.round(q * (s.n - 1) / (n - 1))), yOf = k => (k / (s.n - 1) * 2 - 1) * S.y;
     const xy = i => [st.lay[i][0] * S.x * 0.88, st.lay[i][1] * S.z * 0.88], seg = [], vert = [];
     for (const k of ks) {
       for (let i = 0; i < N; i++) {
-        const act = clamp((s.x[i][k] - st.xr[0]) / (st.xr[1] - st.xr[0]), 0, 1);
-        const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: col.copy(REST).lerp(EPI, act).clone(), roughness: 0.5 }));
-        m.position.set(xy(i)[0], yOf(k), xy(i)[1]); m.scale.setScalar(N > 12 ? 0.05 : 0.058);
-        gLay.add(m);
+        const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone().lerp(EPI, activity(s.x[i][k])), roughness: 0.5 }));
+        m.position.set(xy(i)[0], yOf(k), xy(i)[1]); m.scale.setScalar(r);
+        const b = ring(st.x0[i] < X0C ? EPI : SANO);
+        b.position.copy(m.position); b.scale.setScalar(r * 3.1);
+        gLay.add(m, b);
       }
       const ws = st.edges.map(([i, j]) => st.K * Math.abs(s.x[j][k] - s.x[i][k])), sorted = [...ws].sort((a, b) => a - b);
       const pos = pct / 100 * (sorted.length - 1), lo = Math.floor(pos), cut = sorted.length ? sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (pos - lo) : 0;
@@ -1236,31 +1297,34 @@ function buildGraph3D(T) {
   function update(k) {
     const s = st.sim, N = st.x0.length;
     gDyn.visible = st.mode !== 'capas'; gLay.visible = st.mode === 'capas';
-    if (st.mode === 'capas') { plane.position.y = (k / (s.n - 1) * 2 - 1) * S.y; }
+    if (st.mode === 'capas') plane.position.y = (k / (s.n - 1) * 2 - 1) * S.y;
     let now = 0;
     for (let i = 0; i < N; i++) {
       target(i, k, st.mode === 'capas' ? 'estructura' : st.mode, P[i]);
       if (st.blend < 1 && st.from) P[i].lerpVectors(st.from[i], P[i], st.blend);
-      const ict = s.x[i][k] > st.th, m = nodes[i];
+      const xv = s.x[i][k], ict = xv > st.th, m = nodes[i], r = m.userData.r;
       if (ict) now++;
-      m.position.copy(P[i]); m.scale.setScalar(m.userData.r * (ict ? 1.28 : 1) * (st.hover === i ? 1.2 : 1));
-      m.material.emissiveIntensity = ict ? 0.55 : 0;
-      labels[i].position.copy(P[i]).y += m.userData.r * 2.6;
+      m.position.copy(P[i]); m.material.color.copy(CREAMc).lerp(EPI, activity(xv));
+      rings[i].position.copy(P[i]); rings[i].scale.setScalar(r * (st.hover === i ? 3.7 : 3.1));
+      halos[i].visible = ict; halos[i].position.copy(P[i]); halos[i].scale.setScalar(r * (4.5 + (reduced ? 0 : 0.35 * Math.sin(st.phase * 12 + i))));
+      labels[i].position.copy(P[i]).y += r * 2.9;
     }
-    let top = -1, topW = 0;
     st.edges.forEach(([i, j], q) => {
-      const o = edgeObj[q], a = P[j], b = P[i], W = st.K * Math.abs(s.x[j][k] - s.x[i][k]), w = st.wmax > 0 ? W / st.wmax : 0;
-      if (W > topW) { topW = W; top = q; }
+      const o = edgeObj[q], a = P[j], b = P[i], u = st.wmax > 0 ? st.K * Math.abs(s.x[j][k] - s.x[i][k]) / st.wmax : 0;
+      const hot = st.hover < 0 || st.hover === i || st.hover === j;
       d.subVectors(b, a);
-      const len = d.length();
-      o.cyl.visible = o.cone.visible = len > 0.02;
-      if (len <= 0.02) return;
+      const len = d.length(), ok = len > 0.02;
+      o.cyl.visible = o.cone.visible = ok; o.pulse.visible = ok && u > 0.25 && hot && !reduced;
+      if (!ok) return;
       dn.copy(d).divideScalar(len);
-      const rad = 0.005 + 0.02 * w, hl = Math.min(0.1, len * 0.4);
+      const rad = 0.004 + 0.022 * u, hl = Math.min(0.1, len * 0.4);
       o.cyl.position.copy(a).addScaledVector(d, 0.5); o.cyl.quaternion.setFromUnitVectors(UP, dn); o.cyl.scale.set(rad, len, rad);
-      o.cone.position.copy(a).addScaledVector(d, 0.76); o.cone.quaternion.copy(o.cyl.quaternion); o.cone.scale.set(rad * 2.4 + 0.012, hl, rad * 2.4 + 0.012);
-      ramp(w, o.mat.color);
-      o.mat.opacity = (0.2 + 0.72 * w) * (st.hover < 0 || st.hover === i || st.hover === j ? 1 : 0.08);
+      o.cone.position.copy(a).addScaledVector(d, 0.8); o.cone.quaternion.copy(o.cyl.quaternion); o.cone.scale.set(rad * 2.4 + 0.012, hl, rad * 2.4 + 0.012);
+      o.mat.opacity = (0.07 + 0.83 * u) * (hot ? 1 : 0.15);
+      if (o.pulse.visible) {                      // pulso que viaja de j hacia i
+        const v = (st.phase * (0.5 + u) + (i * 7 + j * 3) % 10 / 10) % 1;
+        o.pulse.position.copy(a).addScaledVector(d, v); o.pulse.scale.setScalar(0.016 + 0.02 * u);
+      }
     });
     const showTrails = st.trails && st.mode === 'fases' && st.blend >= 1;
     trails.forEach((line, i) => {
@@ -1271,43 +1335,42 @@ function buildGraph3D(T) {
       line.geometry.setDrawRange(0, k - k0 + 1);
       line.geometry.attributes.position.needsUpdate = true;
     });
-    const nowEl = $('#g3-now'), topEl = $('#g3-top');
+    const nowEl = $('#g3-now');
     if (nowEl) nowEl.textContent = `${now} / ${N}`;
-    if (topEl) topEl.textContent = top >= 0 && topW > 1e-6 ? `${st.edges[top][1]} → ${st.edges[top][0]}` : '—';
   }
 
   const AXES = {
-    fases: [R`\(x_i(t)\)`, R`\(z_i(t)\)`, R`\(x_{0,i}\)`],
     estructura: ['disposición 1', 'disposición 2', R`\(x_{0,i}\)`],
     capas: ['disposición 1', 'disposición 2', R`\(t\)`],
+    fases: [R`\(x_i(t)\)`, R`\(z_i(t)\)`, R`\(x_{0,i}\)`],
   };
   const NOTES = {
-    fases: [R`Espacio de fases \(\varphi_t(i)\)`, R`Cada nodo está en \(\varphi_t(i) = (x_i(t),\ z_i(t),\ x_{0,i})\) y se mueve con la dinámica.`],
-    estructura: ['Grafo estructural', R`Posición fija: disposición del grafo en el plano y \(x_{0,i}\) como altura. Las aristas siguen mostrando \(W_{ij}(t)\).`],
-    capas: ['Capas temporales', R`Cada piso es el grafo en un instante. El color del nodo es \(x_i(t)\) y el plano marca el tiempo actual.`],
+    estructura: R`La altura es \(x_{0,i}\): los focos quedan abajo y las regiones sanas arriba.`,
+    capas: 'Cada piso es el grafo en un instante. El plano marca el tiempo actual.',
+    fases: R`Cada nodo está en \(\varphi_t(i) = (x_i(t),\ z_i(t),\ x_{0,i})\) y se mueve con la dinámica.`,
   };
   const ANCH = [new T.Vector3(0, -S.y, S.z + 0.3), new T.Vector3(S.x + 0.35, -S.y, 0), new T.Vector3(-S.x - 0.28, 0.1, -S.z)];
   function setMode(mode) {
     if (mode !== 'capas' && st.mode !== 'capas' && mode !== st.mode && st.sim) {      // los nodos viajan de una vista a la otra
       st.from = P.map(p => p.clone()); st.blend = 0;
-      tween(650, u => { st.blend = u; if (reduced) frame(); });
+      tween(650, u => { st.blend = u; if (reduced) draw(); });
     }
     st.mode = mode;
-    $('#g3-title').innerHTML = NOTES[mode][0]; $('#g3-modenote').innerHTML = NOTES[mode][1];
+    $('#g3-modenote').innerHTML = NOTES[mode];
     axLab.forEach((el, q) => { el.innerHTML = AXES[mode][q]; });
-    [$('#g3-title'), $('#g3-modenote'), $('#g3-labels')].forEach(tex);
+    [$('#g3-modenote'), $('#g3-labels')].forEach(tex);
     $('#g3-capas').hidden = mode !== 'capas';
-    $('#g3-leg-nodes').hidden = mode === 'capas'; $('#g3-leg-act').hidden = mode !== 'capas';
     $('#g3-trails').disabled = mode !== 'fases';
     st.hover = -1; tip.classList.remove('on');
-    frame();
+    draw();
   }
 
-  function frame() {
+  function draw() {
     if (!st.sim) return;
     update(st.fr);
     const cp = Math.cos(st.pitch);
-    camera.position.set(st.dist * cp * Math.sin(st.yaw), st.dist * Math.sin(st.pitch), st.dist * cp * Math.cos(st.yaw));
+    const dist = st.dist * st.fit;
+    camera.position.set(dist * cp * Math.sin(st.yaw), dist * Math.sin(st.pitch), dist * cp * Math.cos(st.yaw));
     camera.lookAt(0, 0, 0);
     renderer.render(scene, camera);
     const w = stage.clientWidth, h = stage.clientHeight;
@@ -1315,23 +1378,30 @@ function buildGraph3D(T) {
       v3.copy(ANCH[q]).project(camera);
       el.style.transform = `translate(-50%, -50%) translate(${((v3.x + 1) / 2 * w).toFixed(1)}px, ${((1 - v3.y) / 2 * h).toFixed(1)}px)`;
     });
+    drawWMatrix(cm, st); drawNodeSeries(ct, st);
+    const t = st.sim.t[st.fr];
     if (st.tshown !== st.fr) {
       st.tshown = st.fr;
       iT.value = st.fr; iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
-      const t = Math.round(st.sim.t[st.fr]), o = $('#g3-tout');
-      if (window.katex) katex.render(`t = ${t}`, o, { throwOnError: false }); else o.textContent = 't = ' + t;
+      const o = $('#g3-tout');
+      if (window.katex) katex.render(`t = ${Math.round(t)}`, o, { throwOnError: false }); else o.textContent = 't = ' + Math.round(t);
     }
+    $$('li', rec).forEach(li => {
+      const on = st.Ti[+li.dataset.i] <= t, was = li.classList.contains('on');
+      if (on !== was) { li.classList.toggle('on', on); li.classList.toggle('pop', on && st.playing); }
+    });
     if (st.hover >= 0) showTip();
   }
   function showTip() {
-    const i = st.hover, s = st.sim, k = st.fr, key = i + ':' + k;
+    const i = st.hover, s = st.sim, k = st.fr, key = i + ':' + k, Ti = st.Ti[i];
     if (key !== st.tipKey) {
       st.tipKey = key;
-      tip.innerHTML = `nodo ${i} · ${R`\(\varphi_t(${i}) = (${s.x[i][k].toFixed(2)},\ ${s.z[i][k].toFixed(2)},\ ${st.x0[i].toFixed(2)})\)`}<br>recibe de ${st.nbrs[i].length} · influye sobre ${st.nbrs.filter(n => n.includes(i)).length}`;
+      tip.innerHTML = `nodo ${i} · ${R`\(\varphi_t(${i}) = (${s.x[i][k].toFixed(2)},\ ${s.z[i][k].toFixed(2)},\ ${st.x0[i].toFixed(2)})\)`}<br>` +
+        `recibe de ${st.nbrs[i].length} · influye sobre ${st.nbrs.filter(n => n.includes(i)).length}<br>${isFinite(Ti) ? R`\(T_{${i}} = ${Math.round(Ti)}\)` : 'no reclutado'}`;
       tex(tip);
     }
     v3.copy(P[i]).project(camera);
-    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, stage.clientWidth - 250) + 'px';
+    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, Math.max(0, stage.clientWidth - 250)) + 'px';
     tip.style.top = ((1 - v3.y) / 2 * stage.clientHeight + 16) + 'px';
   }
 
@@ -1352,54 +1422,60 @@ function buildGraph3D(T) {
       tip.classList.toggle('on', st.hover >= 0);
       canvas.style.cursor = st.hover >= 0 ? 'pointer' : 'grab';
     }
-    frame();
+    draw();
   });
   const release = () => { st.drag = false; canvas.style.cursor = 'grab'; };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
-  canvas.addEventListener('pointerleave', () => { if (!st.drag) { st.hover = -1; tip.classList.remove('on'); frame(); } });
-  $('#g3-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); frame(); };
-  $('#g3-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); frame(); };
-  $('#g3-reset').onclick = () => { Object.assign(st, VIEW); frame(); };
+  canvas.addEventListener('pointerleave', () => { if (!st.drag) { st.hover = -1; tip.classList.remove('on'); draw(); } });
+  $('#g3-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); draw(); };
+  $('#g3-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); draw(); };
+  $('#g3-reset').onclick = () => { Object.assign(st, VIEW); draw(); };
 
   let timer;
-  const rebuild = () => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { build(); busy.classList.remove('on'); frame(); }, 140); };
-  bindRange(iN, $('#g3-no'), 0, rebuild); bindRange(iK, $('#g3-ko'), 3, rebuild);
-  bindRange(iL, $('#g3-layerso'), 0, () => { buildLayers(); frame(); });
-  bindRange(iP, $('#g3-pcto'), 0, () => { buildLayers(); frame(); });
+  const rebuild = () => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { build(); busy.classList.remove('on'); draw(); }, 140); };
+  bindRange(iN, $('#g3-no'), 0, rebuild); bindRange(iF, $('#g3-fo'), 0, rebuild);
+  bindRange(iK, $('#g3-ko'), 3, rebuild); bindRange(iS, $('#g3-so'), 0, rebuild);
+  bindRange(iL, $('#g3-layerso'), 0, () => { buildLayers(); draw(); });
+  bindRange(iP, $('#g3-pcto'), 0, () => { buildLayers(); draw(); });
   const seg = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => {
     $$(`#${id} button`).forEach(o => o.setAttribute('aria-pressed', String(o === b)));
     fn(b.dataset.v);
   });
   seg('g3-mode', setMode);
+  seg('g3-dir', v => { st.dir = v; st.fr = 0; rebuild(); });
   seg('g3-var', v => { st.variant = v; st.fr = 0; rebuild(); });
-  const toggle = (id, key) => { $(id).onclick = e => { st[key] = !st[key]; e.currentTarget.setAttribute('aria-pressed', String(st[key])); frame(); }; $(id).setAttribute('aria-pressed', String(st[key])); };
+  const toggle = (id, key) => { $(id).onclick = e => { st[key] = !st[key]; e.currentTarget.setAttribute('aria-pressed', String(st[key])); draw(); }; $(id).setAttribute('aria-pressed', String(st[key])); };
   toggle('#g3-trails', 'trails'); toggle('#g3-spin', 'spin');
   const setPlay = v => { st.playing = v; $('#g3-play').classList.toggle('is-playing', v); };
   $('#g3-play').onclick = () => setPlay(!st.playing);
-  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); frame(); });
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); draw(); });
+  const seek = e => { const r = ct.getBoundingClientRect(); st.fr = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * (st.sim.n - 1)); setPlay(false); draw(); };
+  ct.addEventListener('pointerdown', e => { seek(e); ct.setPointerCapture(e.pointerId); ct.onpointermove = seek; });
+  ct.addEventListener('pointerup', () => { ct.onpointermove = null; });
 
   const size = () => {
     const w = stage.clientWidth, h = stage.clientHeight;
     if (!w || !h) return;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-    frame();
+    st.fit = Math.max(1, 1.42 / camera.aspect);        // en lienzos angostos la cámara se aleja para que quepa la caja
+    draw();
   };
   let last = 0, acc = 0;
   const loop = now => {
     requestAnimationFrame(loop);
     if (!st.vis || document.hidden || !st.sim) { last = now; return; }
     const dt = Math.min(60, now - last || 16); last = now;
-    const moving = st.playing || (st.spin && !st.drag) || st.blend < 1;
+    st.phase += dt / 1000;
     if (st.playing) { acc += dt / 16000 * (st.sim.n - 1); if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; } }
     if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.11;
-    if (moving) frame();
+    if (!reduced || st.playing) draw();
   };
   watchVisible($('#lab3d'), v => { st.vis = v; });
   setPlay(st.playing);
   build();
   if (reduced) st.fr = Math.floor(st.sim.n * 0.3);
-  setMode('fases');
+  setMode('estructura');
   size();
   requestAnimationFrame(loop);
   return size;

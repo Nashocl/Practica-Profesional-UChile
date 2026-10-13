@@ -333,9 +333,10 @@ h2 .katex, h3 .katex, .stat b .katex, .readout dd .katex { font-size: 1em; }
 .g3-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
 .g3-labels { position: absolute; inset: 0; pointer-events: none; }
 .g3-labels > span { position: absolute; left: 0; top: 0; font-family: var(--font-tex); font-size: 15px; color: var(--ink-soft); white-space: nowrap; background: color-mix(in srgb, var(--plate) 72%, transparent); padding: 0 5px; border-radius: 5px; }
-.g3-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; }
+.g3-zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px; }
 .g3-zoom .btn { min-height: 36px; padding: 4px 12px; font-size: 15px; background: color-mix(in srgb, var(--plate) 88%, transparent); }
 .g3-ramp { background: linear-gradient(90deg, #d8c8b0, #c58a2a, #b4502c, #5e1524) !important; width: 44px !important; height: 5px !important; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .g3-ramp.act { background: linear-gradient(90deg, #d3c7b3, #b4502c) !important; }
 .legend [hidden] { display: none; }
+.plots.two .g3-stage { aspect-ratio: 1 / 0.92; }

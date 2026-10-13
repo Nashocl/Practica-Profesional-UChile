@@ -12,3 +12,6 @@ Proix_JNS_2014.pdf
 Thumbs.db
 __pycache__/
 .ipynb_checkpoints/
+
+# versión anterior del notebook del grafo, reemplazada por la 3D
+Grafo_Dinamico_Epileptogenico_Colab (1).ipynb

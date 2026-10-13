@@ -1539,12 +1539,12 @@ const PLATES = {
     { t: 'Fronteras', figs: [F('P_70_1', '', R`Regímenes para \(N = 2\) y fronteras superpuestas para \(N \in \{2,\ 4,\ 10,\ 50\}\) con \(c = K \cdot N\).`)] },
   ],
   grafo3d: [
-    { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
     { t: 'Capas temporales', figs: [F('G3_52_0', '', R`Cinco instantes apilados según \(t\). El color de cada nodo es \(x_i(t)\) y en cada capa se dibujan las aristas con \(W_{ij}\) sobre el percentil \(60\).`)] },
-    { t: 'Espacio de fases', wide: true, figs: [
+    { t: 'Espacio de fases', figs: [
       F('G3_50_0', R`\(t = 0.1\,T\)`, R`Cada nodo en \((x_i,\ z_i,\ x_{0,i})\) al \(10\,\%\) de la simulación. El color y el grosor de las aristas siguen \(W_{ij}(t)\).`),
       F('G3_50_1', R`\(t = 0.5\,T\)`, R`El mismo grafo a mitad de la simulación.`),
       F('G3_50_2', R`\(t = 0.9\,T\)`, R`El mismo grafo al \(90\,\%\) de la simulación.`)] },
+    { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
   ],
   grafo: [
     { t: 'Grafo estructural', figs: [F('G_11_0', '', R`Grafo \(A\) para \(N = 10\): en rojo los nodos con \(x_0 \lt 2.91\), en azul el resto. Etiquetas: índice \(i\) y \(x_{0,i}\).`)] },

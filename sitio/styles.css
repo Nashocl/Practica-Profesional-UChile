@@ -340,3 +340,11 @@ h2 .katex, h3 .katex, .stat b .katex, .readout dd .katex { font-size: 1em; }
 .g3-ramp.act { background: linear-gradient(90deg, #d3c7b3, #b4502c) !important; }
 .legend [hidden] { display: none; }
 .plots.two .g3-stage { aspect-ratio: 1 / 0.92; }
+
+/* figuras 3D: son casi cuadradas, así que van lado a lado y con altura acotada */
+[data-plates="grafo3d"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+[data-plates="grafo3d"] .plate-img img { max-height: 340px; width: auto; max-width: 100%; margin: 0 auto; }
+@media (min-width: 1000px) { [data-plates="grafo3d"] { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { [data-plates="grafo3d"] { grid-template-columns: 1fr; } }
+.plate-tabs { scrollbar-width: none; }
+.plate-tabs::-webkit-scrollbar { display: none; }

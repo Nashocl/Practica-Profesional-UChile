@@ -225,12 +225,16 @@ function background() {
   if (reduced) draw(0); else requestAnimationFrame(loop);
 }
 
+/* ================= Three.js: una sola carga para el cerebro y el grafo 3D ================= */
+let threePromise = null;
+const loadThree = () => threePromise || (threePromise = import('./vendor/three/three.module.js')
+  .catch(() => import('https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js')));
+
 /* ================= portada: cerebro 3D interactivo (Three.js) ================= */
 function brain3d() {
   const canvas = $('#brain3d');
   let onResize = () => {};
-  import('./vendor/three/three.module.js')
-    .catch(() => import('https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js'))
+  loadThree()
     .then(T => { onResize = buildBrain(T, canvas); })
     .catch(() => { canvas.parentElement.style.display = 'none'; });
   return () => onResize();
@@ -1054,6 +1058,353 @@ function lab3() {
   return draw;
 }
 
+/* ================= grafo dinámico 3D (Three.js) ================= */
+function lab3d() {
+  let onResize = () => {};
+  loadThree().then(T => { onResize = buildGraph3D(T); }).catch(() => { $('#lab3d').hidden = true; });
+  return () => onResize();
+}
+
+// disposición de resorte en el plano (Fruchterman-Reingold), equivalente al spring_layout usado para las figuras
+function springLayout(N, edges, seed) {
+  const r = mulberry32(seed), P = Array.from({ length: N }, () => [r() * 2 - 1, r() * 2 - 1]), k = Math.sqrt(4 / N);
+  for (let it = 0, temp = 0.2; it < 120; it++, temp *= 0.97) {
+    const D = P.map(() => [0, 0]);
+    for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
+      const dx = P[a][0] - P[b][0], dy = P[a][1] - P[b][1], d = Math.hypot(dx, dy) || 1e-3, f = k * k / d;
+      D[a][0] += dx / d * f; D[a][1] += dy / d * f; D[b][0] -= dx / d * f; D[b][1] -= dy / d * f;
+    }
+    for (const [a, b] of edges) {
+      const dx = P[a][0] - P[b][0], dy = P[a][1] - P[b][1], d = Math.hypot(dx, dy) || 1e-3, f = d * d / k;
+      D[a][0] -= dx / d * f; D[a][1] -= dy / d * f; D[b][0] += dx / d * f; D[b][1] += dy / d * f;
+    }
+    for (let a = 0; a < N; a++) {
+      const d = Math.hypot(D[a][0], D[a][1]) || 1e-3, s = Math.min(d, temp) / d;
+      P[a][0] += D[a][0] * s; P[a][1] += D[a][1] * s;
+    }
+  }
+  // se estira cada eje para ocupar todo el plano: en este grafo casi todos los pares están conectados y el resorte los apiña
+  const ext = q => { const v = P.map(p => p[q]), lo = Math.min(...v), hi = Math.max(...v); return [lo, hi - lo || 1]; };
+  const [x0, wx] = ext(0), [y0, wy] = ext(1);
+  return P.map(p => [(p[0] - x0) / wx * 2 - 1, (p[1] - y0) / wy * 2 - 1]);
+}
+
+function buildGraph3D(T) {
+  const canvas = $('#g3-canvas'), stage = $('#g3-stage'), tip = $('#g3-tip'), busy = $('#g3-busy');
+  const iN = $('#g3-n'), iK = $('#g3-k'), iT = $('#g3-time'), iL = $('#g3-layers'), iP = $('#g3-pct');
+  const axLab = $$('#g3-labels > span');
+  const S = { x: 1.35, y: 0.9, z: 1.05 }, TRAIL = 220, VIEW = { yaw: -0.85, pitch: 0.36, dist: 5.4 };
+  const st = { mode: 'fases', variant: 'eq8', sim: null, x0: [], nbrs: [], edges: [], lay: [], fr: 0, playing: !reduced, trails: true, spin: !reduced,
+    ...VIEW, hover: -1, wmax: 0, K: 0.1, th: -0.5, xr: [-2, 1], zr: [2, 5], x0r: [2, 4], vis: false, blend: 1, from: null, tipKey: '', tshown: -1, drag: false };
+
+  const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(34, 1, 0.1, 60);
+  scene.add(new T.HemisphereLight(0xfff6ec, 0xa08468, 1.5));
+  const sun = new T.DirectionalLight(0xffffff, 1.5);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+
+  // caja de ejes y rejilla del piso
+  scene.add(new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(2 * S.x, 2 * S.y, 2 * S.z)), new T.LineBasicMaterial({ color: 0xcbb9a0 })));
+  const gridPts = [];
+  for (let q = 1; q < 6; q++) {
+    const u = -1 + q / 3;
+    gridPts.push(u * S.x, -S.y, -S.z, u * S.x, -S.y, S.z, -S.x, -S.y, u * S.z, S.x, -S.y, u * S.z);
+  }
+  const grid = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ color: 0xe2d6c3 }));
+  grid.geometry.setAttribute('position', new T.Float32BufferAttribute(gridPts, 3));
+  scene.add(grid);
+
+  const EPI = new T.Color('#b4502c'), SANO = new T.Color('#66754b'), REST = new T.Color('#d3c7b3');
+  const RAMP = [[0, new T.Color('#d8c8b0')], [0.35, new T.Color('#c58a2a')], [0.7, new T.Color('#b4502c')], [1, new T.Color('#5e1524')]];
+  const ramp = (w, out) => {
+    for (let q = 1; q < RAMP.length; q++) if (w <= RAMP[q][0]) return out.copy(RAMP[q - 1][1]).lerp(RAMP[q][1], (w - RAMP[q - 1][0]) / (RAMP[q][0] - RAMP[q - 1][0]));
+    return out.copy(RAMP[RAMP.length - 1][1]);
+  };
+  const sphereGeo = new T.SphereGeometry(1, 24, 16), cylGeo = new T.CylinderGeometry(1, 1, 1, 8, 1, true), coneGeo = new T.ConeGeometry(1, 1, 10);
+  const shared = new Set([sphereGeo, cylGeo, coneGeo]);
+  const gDyn = new T.Group(), gLay = new T.Group();
+  scene.add(gDyn, gLay);
+  const clear = g => {
+    for (const o of [...g.children]) {
+      g.remove(o);
+      if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose();
+      if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    }
+  };
+  let nodes = [], labels = [], edgeObj = [], trails = [], plane = null;
+  const P = [], UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), dn = new T.Vector3(), v3 = new T.Vector3(), col = new T.Color();
+  const nrm = (v, r) => (v - r[0]) / (r[1] - r[0]) * 2 - 1;
+
+  function numSprite(n) {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    g.font = '42px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#2a2018';
+    g.fillText(n, 32, 34);
+    const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true, depthWrite: false }));
+    s.scale.setScalar(0.2);
+    return s;
+  }
+
+  // ---- simulación y objetos
+  function build() {
+    const N = +iN.value, K = +iK.value, eq8 = st.variant === 'eq8';
+    let x0 = NB_X0.slice();
+    if (N !== 10) { const r = mulberry32(42); x0 = Array.from({ length: N }, (_, i) => i < 2 ? [2.3, 2.4][i] : 2.9 + 0.6 * r()); }
+    const nbrs = x0.map((xi, i) => x0.map((_, j) => j).filter(j => j !== i && x0[j] < xi));
+    const sim = simulate(eq8
+      ? { x0, nbrs, K, T: 20000, xi: x0.map(() => -1.5), zi: x0.slice(), h: hEq8, every: 100 }
+      : { x0, nbrs, K, T: 5000, xi: x0.map(() => -1), zi: x0.map(() => 0), h: hNb, every: 25 });
+    const edges = [];
+    nbrs.forEach((nb, i) => nb.forEach(j => edges.push([i, j])));          // [i, j]: j influye sobre i
+    let wmax = 0;
+    for (const [i, j] of edges) for (let k = 0; k < sim.n; k += 2) wmax = Math.max(wmax, K * Math.abs(sim.x[j][k] - sim.x[i][k]));
+    Object.assign(st, { sim, x0, nbrs, edges, wmax, K, th: eq8 ? -0.5 : 1.0, xr: span(sim.x, 0.15), zr: span(sim.z, 0.15),
+      x0r: [Math.min(...x0) - 0.1, Math.max(...x0) + 0.1], lay: springLayout(N, edges, 42), blend: 1, from: null, tshown: -1, tipKey: '' });
+    if (st.fr > sim.n - 1) st.fr = 0;
+    iT.max = sim.n - 1;
+
+    clear(gDyn);
+    const r = N > 12 ? 0.062 : 0.075;
+    nodes = x0.map((v, i) => {
+      const c = v < X0C ? EPI : SANO;
+      const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0, roughness: 0.45 }));
+      m.userData = { i, r };
+      gDyn.add(m);
+      return m;
+    });
+    labels = x0.map((_, i) => { const s = numSprite(i); gDyn.add(s); return s; });
+    edgeObj = edges.map(() => {
+      const mat = new T.MeshBasicMaterial({ transparent: true, depthWrite: false });
+      const cyl = new T.Mesh(cylGeo, mat), cone = new T.Mesh(coneGeo, mat);
+      gDyn.add(cyl, cone);
+      return { cyl, cone, mat };
+    });
+    trails = x0.map(v => {
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.BufferAttribute(new Float32Array(TRAIL * 3), 3));
+      const line = new T.Line(geo, new T.LineBasicMaterial({ color: v < X0C ? EPI : SANO, transparent: true, opacity: 0.5 }));
+      line.frustumCulled = false;
+      gDyn.add(line);
+      return line;
+    });
+    P.length = 0;
+    x0.forEach(() => P.push(new T.Vector3()));
+    $('#g3-read').innerHTML =
+      `<div><dt>Aristas</dt><dd>${edges.length}</dd></div><div><dt>En crisis ahora</dt><dd id="g3-now">0</dd></div>` +
+      `<div><dt>Arista más intensa</dt><dd id="g3-top">—</dd></div>`;
+    buildLayers();
+  }
+
+  function target(i, k, mode, out) {
+    const s = st.sim;
+    if (mode === 'fases') return out.set(nrm(s.x[i][k], st.xr) * S.x, nrm(st.x0[i], st.x0r) * S.y, nrm(s.z[i][k], st.zr) * S.z);
+    return out.set(st.lay[i][0] * S.x * 0.88, nrm(st.x0[i], st.x0r) * S.y, st.lay[i][1] * S.z * 0.88);
+  }
+
+  // ---- capas temporales: el grafo en n instantes, apilado según t
+  function buildLayers() {
+    clear(gLay);
+    const s = st.sim, N = st.x0.length, n = +iL.value, pct = +iP.value;
+    const ks = Array.from({ length: n }, (_, q) => Math.round(q * (s.n - 1) / (n - 1))), yOf = k => (k / (s.n - 1) * 2 - 1) * S.y;
+    const xy = i => [st.lay[i][0] * S.x * 0.88, st.lay[i][1] * S.z * 0.88], seg = [], vert = [];
+    for (const k of ks) {
+      for (let i = 0; i < N; i++) {
+        const act = clamp((s.x[i][k] - st.xr[0]) / (st.xr[1] - st.xr[0]), 0, 1);
+        const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: col.copy(REST).lerp(EPI, act).clone(), roughness: 0.5 }));
+        m.position.set(xy(i)[0], yOf(k), xy(i)[1]); m.scale.setScalar(N > 12 ? 0.05 : 0.058);
+        gLay.add(m);
+      }
+      const ws = st.edges.map(([i, j]) => st.K * Math.abs(s.x[j][k] - s.x[i][k])), sorted = [...ws].sort((a, b) => a - b);
+      const pos = pct / 100 * (sorted.length - 1), lo = Math.floor(pos), cut = sorted.length ? sorted[lo] + (sorted[Math.min(lo + 1, sorted.length - 1)] - sorted[lo]) * (pos - lo) : 0;
+      st.edges.forEach(([i, j], q) => { if (ws[q] >= cut) seg.push(xy(j)[0], yOf(k), xy(j)[1], xy(i)[0], yOf(k), xy(i)[1]); });
+    }
+    for (let i = 0; i < N; i++) vert.push(xy(i)[0], -S.y, xy(i)[1], xy(i)[0], S.y, xy(i)[1]);
+    const mk = (pts, color, opacity) => {
+      const l = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ color, transparent: true, opacity }));
+      l.geometry.setAttribute('position', new T.Float32BufferAttribute(pts, 3));
+      gLay.add(l);
+    };
+    mk(seg, 0x8c7a66, 0.55); mk(vert, 0xcbb9a0, 0.8);
+    plane = new T.Mesh(new T.PlaneGeometry(2 * S.x, 2 * S.z), new T.MeshBasicMaterial({ color: EPI, transparent: true, opacity: 0.1, side: T.DoubleSide, depthWrite: false }));
+    plane.rotation.x = -Math.PI / 2;
+    gLay.add(plane);
+  }
+
+  // ---- estado del grafo en el cuadro k
+  function update(k) {
+    const s = st.sim, N = st.x0.length;
+    gDyn.visible = st.mode !== 'capas'; gLay.visible = st.mode === 'capas';
+    if (st.mode === 'capas') { plane.position.y = (k / (s.n - 1) * 2 - 1) * S.y; }
+    let now = 0;
+    for (let i = 0; i < N; i++) {
+      target(i, k, st.mode === 'capas' ? 'estructura' : st.mode, P[i]);
+      if (st.blend < 1 && st.from) P[i].lerpVectors(st.from[i], P[i], st.blend);
+      const ict = s.x[i][k] > st.th, m = nodes[i];
+      if (ict) now++;
+      m.position.copy(P[i]); m.scale.setScalar(m.userData.r * (ict ? 1.28 : 1) * (st.hover === i ? 1.2 : 1));
+      m.material.emissiveIntensity = ict ? 0.55 : 0;
+      labels[i].position.copy(P[i]).y += m.userData.r * 2.6;
+    }
+    let top = -1, topW = 0;
+    st.edges.forEach(([i, j], q) => {
+      const o = edgeObj[q], a = P[j], b = P[i], W = st.K * Math.abs(s.x[j][k] - s.x[i][k]), w = st.wmax > 0 ? W / st.wmax : 0;
+      if (W > topW) { topW = W; top = q; }
+      d.subVectors(b, a);
+      const len = d.length();
+      o.cyl.visible = o.cone.visible = len > 0.02;
+      if (len <= 0.02) return;
+      dn.copy(d).divideScalar(len);
+      const rad = 0.005 + 0.02 * w, hl = Math.min(0.1, len * 0.4);
+      o.cyl.position.copy(a).addScaledVector(d, 0.5); o.cyl.quaternion.setFromUnitVectors(UP, dn); o.cyl.scale.set(rad, len, rad);
+      o.cone.position.copy(a).addScaledVector(d, 0.76); o.cone.quaternion.copy(o.cyl.quaternion); o.cone.scale.set(rad * 2.4 + 0.012, hl, rad * 2.4 + 0.012);
+      ramp(w, o.mat.color);
+      o.mat.opacity = (0.2 + 0.72 * w) * (st.hover < 0 || st.hover === i || st.hover === j ? 1 : 0.08);
+    });
+    const showTrails = st.trails && st.mode === 'fases' && st.blend >= 1;
+    trails.forEach((line, i) => {
+      line.visible = showTrails;
+      if (!showTrails) return;
+      const arr = line.geometry.attributes.position.array, k0 = Math.max(0, k - TRAIL + 1);
+      for (let q = k0, m = 0; q <= k; q++, m += 3) { target(i, q, 'fases', v3); arr[m] = v3.x; arr[m + 1] = v3.y; arr[m + 2] = v3.z; }
+      line.geometry.setDrawRange(0, k - k0 + 1);
+      line.geometry.attributes.position.needsUpdate = true;
+    });
+    const nowEl = $('#g3-now'), topEl = $('#g3-top');
+    if (nowEl) nowEl.textContent = `${now} / ${N}`;
+    if (topEl) topEl.textContent = top >= 0 && topW > 1e-6 ? `${st.edges[top][1]} → ${st.edges[top][0]}` : '—';
+  }
+
+  const AXES = {
+    fases: [R`\(x_i(t)\)`, R`\(z_i(t)\)`, R`\(x_{0,i}\)`],
+    estructura: ['disposición 1', 'disposición 2', R`\(x_{0,i}\)`],
+    capas: ['disposición 1', 'disposición 2', R`\(t\)`],
+  };
+  const NOTES = {
+    fases: [R`Espacio de fases \(\varphi_t(i)\)`, R`Cada nodo está en \(\varphi_t(i) = (x_i(t),\ z_i(t),\ x_{0,i})\) y se mueve con la dinámica.`],
+    estructura: ['Grafo estructural', R`Posición fija: disposición del grafo en el plano y \(x_{0,i}\) como altura. Las aristas siguen mostrando \(W_{ij}(t)\).`],
+    capas: ['Capas temporales', R`Cada piso es el grafo en un instante. El color del nodo es \(x_i(t)\) y el plano marca el tiempo actual.`],
+  };
+  const ANCH = [new T.Vector3(0, -S.y, S.z + 0.3), new T.Vector3(S.x + 0.35, -S.y, 0), new T.Vector3(-S.x - 0.28, 0.1, -S.z)];
+  function setMode(mode) {
+    if (mode !== 'capas' && st.mode !== 'capas' && mode !== st.mode && st.sim) {      // los nodos viajan de una vista a la otra
+      st.from = P.map(p => p.clone()); st.blend = 0;
+      tween(650, u => { st.blend = u; if (reduced) frame(); });
+    }
+    st.mode = mode;
+    $('#g3-title').innerHTML = NOTES[mode][0]; $('#g3-modenote').innerHTML = NOTES[mode][1];
+    axLab.forEach((el, q) => { el.innerHTML = AXES[mode][q]; });
+    [$('#g3-title'), $('#g3-modenote'), $('#g3-labels')].forEach(tex);
+    $('#g3-capas').hidden = mode !== 'capas';
+    $('#g3-leg-nodes').hidden = mode === 'capas'; $('#g3-leg-act').hidden = mode !== 'capas';
+    $('#g3-trails').disabled = mode !== 'fases';
+    st.hover = -1; tip.classList.remove('on');
+    frame();
+  }
+
+  function frame() {
+    if (!st.sim) return;
+    update(st.fr);
+    const cp = Math.cos(st.pitch);
+    camera.position.set(st.dist * cp * Math.sin(st.yaw), st.dist * Math.sin(st.pitch), st.dist * cp * Math.cos(st.yaw));
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    const w = stage.clientWidth, h = stage.clientHeight;
+    axLab.forEach((el, q) => {
+      v3.copy(ANCH[q]).project(camera);
+      el.style.transform = `translate(-50%, -50%) translate(${((v3.x + 1) / 2 * w).toFixed(1)}px, ${((1 - v3.y) / 2 * h).toFixed(1)}px)`;
+    });
+    if (st.tshown !== st.fr) {
+      st.tshown = st.fr;
+      iT.value = st.fr; iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
+      const t = Math.round(st.sim.t[st.fr]), o = $('#g3-tout');
+      if (window.katex) katex.render(`t = ${t}`, o, { throwOnError: false }); else o.textContent = 't = ' + t;
+    }
+    if (st.hover >= 0) showTip();
+  }
+  function showTip() {
+    const i = st.hover, s = st.sim, k = st.fr, key = i + ':' + k;
+    if (key !== st.tipKey) {
+      st.tipKey = key;
+      tip.innerHTML = `nodo ${i} · ${R`\(\varphi_t(${i}) = (${s.x[i][k].toFixed(2)},\ ${s.z[i][k].toFixed(2)},\ ${st.x0[i].toFixed(2)})\)`}<br>recibe de ${st.nbrs[i].length} · influye sobre ${st.nbrs.filter(n => n.includes(i)).length}`;
+      tex(tip);
+    }
+    v3.copy(P[i]).project(camera);
+    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, stage.clientWidth - 250) + 'px';
+    tip.style.top = ((1 - v3.y) / 2 * stage.clientHeight + 16) + 'px';
+  }
+
+  // ---- interacción
+  const ray = new T.Raycaster(), ndc = new T.Vector2();
+  let lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => { st.drag = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+  canvas.addEventListener('pointermove', e => {
+    if (st.drag) {
+      st.yaw -= (e.clientX - lx) * 0.009; st.pitch = clamp(st.pitch + (e.clientY - ly) * 0.007, -1.2, 1.35);
+      lx = e.clientX; ly = e.clientY;
+    } else if (st.mode !== 'capas' && st.sim) {
+      const b = canvas.getBoundingClientRect();
+      ndc.set((e.clientX - b.left) / b.width * 2 - 1, 1 - (e.clientY - b.top) / b.height * 2);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(nodes)[0];
+      st.hover = hit ? hit.object.userData.i : -1;
+      tip.classList.toggle('on', st.hover >= 0);
+      canvas.style.cursor = st.hover >= 0 ? 'pointer' : 'grab';
+    }
+    frame();
+  });
+  const release = () => { st.drag = false; canvas.style.cursor = 'grab'; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointerleave', () => { if (!st.drag) { st.hover = -1; tip.classList.remove('on'); frame(); } });
+  $('#g3-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); frame(); };
+  $('#g3-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); frame(); };
+  $('#g3-reset').onclick = () => { Object.assign(st, VIEW); frame(); };
+
+  let timer;
+  const rebuild = () => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { build(); busy.classList.remove('on'); frame(); }, 140); };
+  bindRange(iN, $('#g3-no'), 0, rebuild); bindRange(iK, $('#g3-ko'), 3, rebuild);
+  bindRange(iL, $('#g3-layerso'), 0, () => { buildLayers(); frame(); });
+  bindRange(iP, $('#g3-pcto'), 0, () => { buildLayers(); frame(); });
+  const seg = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => {
+    $$(`#${id} button`).forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    fn(b.dataset.v);
+  });
+  seg('g3-mode', setMode);
+  seg('g3-var', v => { st.variant = v; st.fr = 0; rebuild(); });
+  const toggle = (id, key) => { $(id).onclick = e => { st[key] = !st[key]; e.currentTarget.setAttribute('aria-pressed', String(st[key])); frame(); }; $(id).setAttribute('aria-pressed', String(st[key])); };
+  toggle('#g3-trails', 'trails'); toggle('#g3-spin', 'spin');
+  const setPlay = v => { st.playing = v; $('#g3-play').classList.toggle('is-playing', v); };
+  $('#g3-play').onclick = () => setPlay(!st.playing);
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); frame(); });
+
+  const size = () => {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    frame();
+  };
+  let last = 0, acc = 0;
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (!st.vis || document.hidden || !st.sim) { last = now; return; }
+    const dt = Math.min(60, now - last || 16); last = now;
+    const moving = st.playing || (st.spin && !st.drag) || st.blend < 1;
+    if (st.playing) { acc += dt / 16000 * (st.sim.n - 1); if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; } }
+    if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.11;
+    if (moving) frame();
+  };
+  watchVisible($('#lab3d'), v => { st.vis = v; });
+  setPlay(st.playing);
+  build();
+  if (reduced) st.fr = Math.floor(st.sim.n * 0.3);
+  setMode('fases');
+  size();
+  requestAnimationFrame(loop);
+  return size;
+}
+
 /* ================= láminas de figuras ================= */
 const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap });
 const PLATES = {
@@ -1110,6 +1461,14 @@ const PLATES = {
     { t: 'Sincronía', wide: true, figs: [F('P_67_2', '', R`Dispersión transversal \(\sigma_\perp^2(t)\) y su mediana en función de \(N\) para cuatro configuraciones.`)] },
     { t: 'Exponente', figs: [F('P_69_0', '', R`Exponente transversal \(\lambda_\perp\) sobre la órbita sincrónica en función de \(K \cdot N\), para \(x_0 = 2.5\) y \(x_0 = 2.8\).`)] },
     { t: 'Fronteras', figs: [F('P_70_1', '', R`Regímenes para \(N = 2\) y fronteras superpuestas para \(N \in \{2,\ 4,\ 10,\ 50\}\) con \(c = K \cdot N\).`)] },
+  ],
+  grafo3d: [
+    { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
+    { t: 'Capas temporales', figs: [F('G3_52_0', '', R`Cinco instantes apilados según \(t\). El color de cada nodo es \(x_i(t)\) y en cada capa se dibujan las aristas con \(W_{ij}\) sobre el percentil \(60\).`)] },
+    { t: 'Espacio de fases', wide: true, figs: [
+      F('G3_50_0', R`\(t = 0.1\,T\)`, R`Cada nodo en \((x_i,\ z_i,\ x_{0,i})\) al \(10\,\%\) de la simulación. El color y el grosor de las aristas siguen \(W_{ij}(t)\).`),
+      F('G3_50_1', R`\(t = 0.5\,T\)`, R`El mismo grafo a mitad de la simulación.`),
+      F('G3_50_2', R`\(t = 0.9\,T\)`, R`El mismo grafo al \(90\,\%\) de la simulación.`)] },
   ],
   grafo: [
     { t: 'Grafo estructural', figs: [F('G_11_0', '', R`Grafo \(A\) para \(N = 10\): en rojo los nodos con \(x_0 \lt 2.91\), en azul el resto. Etiquetas: índice \(i\) y \(x_{0,i}\).`)] },
@@ -1212,7 +1571,7 @@ function motion(m) {
 /* ================= arranque ================= */
 function boot() {
   background(); plates(); nav();
-  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3()];
+  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d()];
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
   tex(document.body);

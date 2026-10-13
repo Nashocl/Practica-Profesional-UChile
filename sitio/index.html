@@ -470,7 +470,7 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
           </div>
           <div class="plot"><h4>\(x_i(t)\) · haz clic para mover el tiempo</h4><canvas id="g-ts" height="170" style="cursor:crosshair"></canvas></div>
           <div class="timeline">
-            <button class="btn" id="g-play" type="button" aria-label="Reproducir o pausar">
+            <button class="btn playbtn" id="g-play" type="button" aria-label="Reproducir o pausar">
               <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
             </button>
             <input type="range" id="g-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
@@ -478,6 +478,96 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="sub">
+      <p class="kicker" data-reveal>Últimos avances</p>
+      <h3 data-reveal>Grafo dinámico en 3D</h3>
+      <div class="cols" style="margin-bottom:22px">
+        <div class="eq" data-reveal>
+          <p class="kicker">Encaje de cada región en el espacio de fases</p>
+          $$\varphi_t(i) = \big(x_i(t),\ z_i(t),\ x_{0,i}\big)$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Cada nodo \(i\) se ubica en el punto \(\varphi_t(i)\in\mathbb R^3\). Las dos primeras coordenadas cambian con la dinámica y la tercera, la excitabilidad, queda fija.</p>
+        </div>
+        <div class="prose" data-reveal>
+          <p>Cada región del Epileptor tiene tres coordenadas naturales: su actividad \(x_i(t)\), su permitividad \(z_i(t)\) y su excitabilidad \(x_{0,i}\). Al usarlas como ejes, los nodos se mueven con la dinámica y las aristas cambian de grosor y color según \(W_{ij}(t)\).</p>
+          <p>Las aristas van de \(j\) hacia \(i\), es decir, de la región que influye a la que recibe. El modelo tiene tres vistas: el espacio de fases, el grafo estructural con \(x_{0,i}\) como altura y las capas temporales, donde cada piso es el grafo en un instante.</p>
+        </div>
+      </div>
+
+      <div class="lab" id="lab3d" data-reveal>
+        <div class="lab-head"><h3>Laboratorio · grafo dinámico 3D</h3><span class="live">Three.js en vivo</span></div>
+        <div class="lab-grid">
+          <div class="controls">
+            <div class="ctl">
+              <div class="lbl"><span>Vista</span></div>
+              <div class="seg three" id="g3-mode">
+                <button type="button" data-v="fases" aria-pressed="true">Fases</button>
+                <button type="button" data-v="estructura" aria-pressed="false">Estructura</button>
+                <button type="button" data-v="capas" aria-pressed="false">Capas</button>
+              </div>
+              <small id="g3-modenote"></small>
+            </div>
+            <div class="ctl">
+              <label for="g3-n"><span>Regiones \(N\)</span> <output id="g3-no">10</output></label>
+              <input type="range" id="g3-n" min="4" max="16" step="1" value="10">
+            </div>
+            <div class="ctl">
+              <label for="g3-k"><span>Acoplamiento \(K\)</span> <output id="g3-ko">0.10</output></label>
+              <input type="range" id="g3-k" min="0" max="0.6" step="0.005" value="0.1">
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Función \(h\) y condición inicial</span></div>
+              <div class="seg" id="g3-var"><button type="button" data-v="eq8" aria-pressed="true">Ecuación (8)</button><button type="button" data-v="nb" aria-pressed="false">Variante</button></div>
+            </div>
+            <div class="ctl" id="g3-capas" hidden>
+              <label for="g3-layers"><span>Número de capas</span> <output id="g3-layerso">5</output></label>
+              <input type="range" id="g3-layers" min="3" max="9" step="1" value="5">
+              <label for="g3-pct" style="margin-top:12px"><span>Umbral de aristas (percentil)</span> <output id="g3-pcto">60</output></label>
+              <input type="range" id="g3-pct" min="0" max="90" step="5" value="60">
+              <small>En cada capa se dibujan solo las aristas con \(W_{ij}\) sobre ese percentil.</small>
+            </div>
+            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button type="button" class="btn ghost" id="g3-trails" aria-pressed="true">Trayectorias</button>
+              <button type="button" class="btn ghost" id="g3-spin" aria-pressed="true">Giro automático</button>
+            </div>
+            <dl class="readout" id="g3-read"></dl>
+          </div>
+
+          <div class="plots">
+            <div class="plot g3-view" id="g3-view">
+              <h4 id="g3-title">Espacio de fases \(\varphi_t(i)\)</h4>
+              <span class="busy" id="g3-busy">calculando…</span>
+              <div class="g3-stage" id="g3-stage">
+                <canvas id="g3-canvas" role="img" aria-label="Grafo dinámico en tres dimensiones; arrastra para girar la vista" title="Arrastra para girar"></canvas>
+                <div class="g3-labels" id="g3-labels" aria-hidden="true">
+                  <span data-ax="0"></span><span data-ax="1"></span><span data-ax="2"></span>
+                </div>
+                <div class="tip" id="g3-tip"></div>
+                <div class="g3-zoom">
+                  <button type="button" class="btn ghost" id="g3-zin" aria-label="Acercar">+</button>
+                  <button type="button" class="btn ghost" id="g3-zout" aria-label="Alejar">−</button>
+                  <button type="button" class="btn ghost" id="g3-reset">Vista inicial</button>
+                </div>
+              </div>
+              <div class="legend">
+                <span id="g3-leg-nodes"><i style="background:var(--accent)"></i>nodo: \(x_0 \lt 2.91\) &nbsp; <i style="background:var(--sage)"></i>nodo: \(x_0 \ge 2.91\)</span>
+                <span id="g3-leg-act" hidden><i class="g3-ramp act"></i>nodo: \(x_i(t)\) de reposo a crisis</span>
+                <span><i class="g3-ramp"></i>arista: \(W_{ij}(t)\) de menor a mayor</span>
+              </div>
+            </div>
+            <div class="timeline">
+              <button class="btn playbtn" id="g3-play" type="button" aria-label="Reproducir o pausar">
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
+              </button>
+              <input type="range" id="g3-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
+              <output id="g3-tout">t = 0</output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="plates" data-plates="grafo3d"></div>
     </div>
 
     <div class="sub">
@@ -493,10 +583,11 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
           <li><span>Como \(A\) se define a partir de \(x_0\), el grado ordena los nodos igual que la excitabilidad. Por eso el nodo 3, que tiene el mayor grado de salida \((d^{out}_3 = 9)\), es también el de mayor influencia dinámica \((H^{dyn,out}_3 = 182.1)\).</span></li>
           <li><span>Hay que tener cuidado con la dirección de las flechas. <code>nx.DiGraph(A)</code> dibuja \(i \to j\), pero en la ecuación es \(j\) quien influye sobre \(i\). Por eso comparé \(A\) con \(A^{\mathsf T}\), y el laboratorio dibuja siempre la flecha en el sentido de la influencia.</span></li>
           <li><span>Los nodos 0 y 1, que son los focos, concentran la influencia entrante: \(H^{dyn,in} = 303.6\) y \(267.8\). En la matriz \(A\) todos los demás nodos apuntan hacia ellos.</span></li>
+          <li><span>El acoplamiento de red no se puede reemplazar por uno de campo medio en este grafo: con \(K = 0.1\), el error relativo global entre los dos términos es \(0.93\).</span></li>
         </ol>
         <div data-reveal>
           <p class="note"><strong>Sobre la función \(h\) en este experimento.</strong> En el experimento base del grafo usé \(h_i(x) = x_{0,i} - 3 + 3\,\sigma\big((x-0.5)/0.1\big)\) con \(z_i(0)=0\), que es distinta de la ecuación (8). Con esa elección todas las regiones saltan a la rama alta en \(t \approx 1\) y después decaen lentamente. Por eso \(T_i = 1.0\) para los diez nodos y \(R(K) = 1\) incluso con \(K = 0\): el reclutamiento medido corresponde al transitorio inicial y no al acoplamiento. El laboratorio permite comparar las dos variantes. Con la ecuación (8) y reposo inicial sí aparece una cascada que depende de \(K\).</p>
-          <p class="note" style="margin-top:12px"><strong>Trabajo pendiente.</strong> Falta completar la comparación con el modelo de campo medio, las réplicas estadísticas con varias semillas y el estudio de convergencia numérica.</p>
+          <p class="note" style="margin-top:12px"><strong>Trabajo pendiente.</strong> Faltan las réplicas estadísticas con varias semillas y el estudio de convergencia numérica.</p>
         </div>
       </div>
     </div>

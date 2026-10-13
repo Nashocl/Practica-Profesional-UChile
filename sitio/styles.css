@@ -202,9 +202,9 @@ input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.18); }
 
 .timeline { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; margin-top: 4px; }
 .timeline .btn { width: 46px; height: 46px; border-radius: 50%; padding: 0; display: grid; place-items: center; }
-#g-play path { transform-box: fill-box; transform-origin: center; transition: opacity .12s ease-out, transform .12s ease-out; }
-#g-play .ic-pause, #g-play.is-playing .ic-play { opacity: 0; transform: scale(0.9); }
-#g-play.is-playing .ic-pause { opacity: 1; transform: none; }
+.playbtn path { transform-box: fill-box; transform-origin: center; transition: opacity .12s ease-out, transform .12s ease-out; }
+.playbtn .ic-pause, .playbtn.is-playing .ic-play { opacity: 0; transform: scale(0.9); }
+.playbtn.is-playing .ic-pause { opacity: 1; transform: none; }
 .timeline output { font-family: var(--font-tex); font-size: 15.5px; min-width: 92px; text-align: right; }
 .recruit { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .recruit li { display: grid; grid-template-columns: 28px 46px 1fr 64px; align-items: center; gap: 8px; font-family: var(--font-tex); font-size: 14.5px; color: var(--muted); }
@@ -324,3 +324,18 @@ h2 .katex, h3 .katex, .stat b .katex, .readout dd .katex { font-size: 1em; }
 
 /* eslogan bajo el título de la portada */
 .tagline { font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: clamp(20px, 2.3vw, 31px); line-height: 1.25; color: var(--ink-soft); margin: clamp(14px, 2vw, 22px) 0 0; max-width: 24ch; }
+
+/* ---------- grafo dinámico 3D ---------- */
+.seg.three::before { width: calc((100% - 12px) / 3); }
+.seg.three:has(button:nth-child(3)[aria-pressed="true"])::before { transform: translateX(calc(200% + 6px)); }
+.g3-view { padding-bottom: 8px; }
+.g3-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 620px; overflow: hidden; border-radius: 10px; }
+.g3-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: pan-y; }
+.g3-labels { position: absolute; inset: 0; pointer-events: none; }
+.g3-labels > span { position: absolute; left: 0; top: 0; font-family: var(--font-tex); font-size: 15px; color: var(--ink-soft); white-space: nowrap; background: color-mix(in srgb, var(--plate) 72%, transparent); padding: 0 5px; border-radius: 5px; }
+.g3-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; }
+.g3-zoom .btn { min-height: 36px; padding: 4px 12px; font-size: 15px; background: color-mix(in srgb, var(--plate) 88%, transparent); }
+.g3-ramp { background: linear-gradient(90deg, #d8c8b0, #c58a2a, #b4502c, #5e1524) !important; width: 44px !important; height: 5px !important; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.g3-ramp.act { background: linear-gradient(90deg, #d3c7b3, #b4502c) !important; }
+.legend [hidden] { display: none; }

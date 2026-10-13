@@ -6,9 +6,10 @@ El trabajo estudia la reducción a dos variables del Epileptor con acoplamiento 
 
 ## Contenido
 
-- `sitio/`: página web que presenta el trabajo. Tiene laboratorios interactivos para N = 1, N = 2, el modelo con ruido y el grafo dinámico, además de las figuras de las simulaciones.
+- `sitio/`: página web que presenta el trabajo. Tiene laboratorios interactivos para N = 1, N = 2, el modelo con ruido, el grafo dinámico y su versión en 3D, además de las figuras de las simulaciones.
 - `Práctica_OFICIAL.ipynb`: simulaciones y análisis para N = 1 y N = 2, el modelo con ruido y la extensión a N regiones.
 - `Grafo_Dinamico_Epileptogenico_Colab (1).ipynb`: construcción de la matriz de adyacencia, grafo dinámico y reclutamiento en la red.
+- `Grafo_Dinamico_Epileptogenico_Colab_3D.ipynb`: versión más reciente del anterior. Agrega el grafo en 3D con cada región en (x_i(t), z_i(t), x_{0,i}), las capas temporales, la animación y la comparación con campo medio.
 
 ## Ver la página
 

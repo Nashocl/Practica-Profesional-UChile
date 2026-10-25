@@ -1958,9 +1958,468 @@ function buildDN(T) {
   return size;
 }
 
+const CL_SEED = 26;                    // realización con ruido que tiene una cascada completa
+/* ================= clusters del grafo dinámico (Three.js) ================= */
+// métodos de comunidades sobre W; cada uno devuelve etiquetas 0..k-1
+function cnmDN(W, N) {                 // Greedy (CNM): fusiones que más suben Q, desde nodos sueltos
+  const lab = Int32Array.from({ length: N }, (_, i) => i);
+  let best = modQ(W, lab, N);
+  for (;;) {
+    const cs = [...new Set(lab)];
+    let bq = best, pair = null;
+    for (let a = 0; a < cs.length; a++) for (let b = a + 1; b < cs.length; b++) {
+      const q = modQ(W, lab.map(c => c === cs[b] ? cs[a] : c), N);
+      if (q > bq + 1e-12) { bq = q; pair = [cs[a], cs[b]]; }
+    }
+    if (!pair) return lab;
+    for (let i = 0; i < N; i++) if (lab[i] === pair[1]) lab[i] = pair[0];
+    best = bq;
+  }
+}
+function lpaDN(W, N, r) {               // propagación de etiquetas asíncrona y ponderada
+  const lab = Int32Array.from({ length: N }, (_, i) => i);
+  for (let it = 0; it < 100; it++) {
+    let changed = false;
+    for (const i of [...lab.keys()].sort(() => r() - 0.5)) {
+      const acc = new Map();
+      for (let j = 0; j < N; j++) if (j !== i && W[i * N + j] > 0) acc.set(lab[j], (acc.get(lab[j]) || 0) + W[i * N + j]);
+      if (!acc.size) continue;
+      const mx = Math.max(...acc.values()), best = [...acc].filter(([, v]) => v >= mx - 1e-12).map(([c]) => c);
+      if (best.includes(lab[i])) continue;
+      lab[i] = best[Math.floor(r() * best.length)]; changed = true;
+    }
+    if (!changed) break;
+  }
+  return lab;
+}
+function jacobiEig(A, N) {              // vectores propios de una matriz simétrica pequeña
+  const a = Float64Array.from(A), V = new Float64Array(N * N);
+  for (let i = 0; i < N; i++) V[i * N + i] = 1;
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let p = 0; p < N; p++) for (let q = p + 1; q < N; q++) off += a[p * N + q] ** 2;
+    if (off < 1e-20) break;
+    for (let p = 0; p < N; p++) for (let q = p + 1; q < N; q++) {
+      const apq = a[p * N + q];
+      if (Math.abs(apq) < 1e-15) continue;
+      const th = (a[q * N + q] - a[p * N + p]) / (2 * apq), t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < N; k++) {
+        const akp = a[k * N + p], akq = a[k * N + q];
+        a[k * N + p] = c * akp - s * akq; a[k * N + q] = s * akp + c * akq;
+      }
+      for (let k = 0; k < N; k++) {
+        const apk = a[p * N + k], aqk = a[q * N + k];
+        a[p * N + k] = c * apk - s * aqk; a[q * N + k] = s * apk + c * aqk;
+      }
+      for (let k = 0; k < N; k++) {
+        const vkp = V[k * N + p], vkq = V[k * N + q];
+        V[k * N + p] = c * vkp - s * vkq; V[k * N + q] = s * vkp + c * vkq;
+      }
+    }
+  }
+  const idx = [...Array(N).keys()].sort((i, j) => a[i * N + i] - a[j * N + j]);
+  return { val: idx.map(i => a[i * N + i]), vec: idx.map(i => Array.from({ length: N }, (_, k) => V[k * N + i])) };
+}
+function spectralDN(W, N, r) {
+  const d = Array.from({ length: N }, (_, i) => { let s = 0; for (let j = 0; j < N; j++) s += W[i * N + j]; return Math.max(s, 1e-12); });
+  const L = new Float64Array(N * N);
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) L[i * N + j] = (i === j ? 1 : 0) - W[i * N + j] / Math.sqrt(d[i] * d[j]);
+  const { val, vec } = jacobiEig(L, N), head = val.slice(0, Math.floor(N / 2) + 1);
+  let k = 0, gap = -Infinity;
+  for (let q = 0; q + 1 < head.length; q++) if (head[q + 1] - head[q] > gap) { gap = head[q + 1] - head[q]; k = q; }
+  k = Math.max(2, k + 1);
+  const U = Array.from({ length: N }, (_, i) => { const row = vec.slice(0, k).map(v => v[i]), n = Math.hypot(...row) || 1e-12; return row.map(v => v / n); });
+  let best = null, bestI = Infinity;
+  for (let init = 0; init < 10; init++) {              // k-medias con siembra k-means++
+    const C = [U[Math.floor(r() * N)].slice()];
+    while (C.length < k) {
+      const dd = U.map(u => Math.min(...C.map(c => u.reduce((s, v, q) => s + (v - c[q]) ** 2, 0)))), tot = dd.reduce((s, v) => s + v, 0);
+      let x = r() * tot, q = 0;
+      while (q < N - 1 && (x -= dd[q]) > 0) q++;
+      C.push(U[q].slice());
+    }
+    const lab = new Int32Array(N);
+    for (let it = 0; it < 50; it++) {
+      let ch = false;
+      U.forEach((u, i) => {
+        let bc = 0, bd = Infinity;
+        C.forEach((c, q) => { const s = u.reduce((t, v, m) => t + (v - c[m]) ** 2, 0); if (s < bd) { bd = s; bc = q; } });
+        if (lab[i] !== bc || it === 0) { ch = ch || lab[i] !== bc; lab[i] = bc; }
+      });
+      C.forEach((c, q) => { const mem = U.filter((_, i) => lab[i] === q); if (mem.length) c.forEach((_, m) => { c[m] = mem.reduce((s, u) => s + u[m], 0) / mem.length; }); });
+      if (!ch && it) break;
+    }
+    const inertia = U.reduce((s, u, i) => s + u.reduce((t, v, m) => t + (v - C[lab[i]][m]) ** 2, 0), 0);
+    if (inertia < bestI) { bestI = inertia; best = lab; }
+  }
+  return best;
+}
+// reordena etiquetas: comunidades ordenadas por su menor miembro
+function partition(lab, N) {
+  const coms = [...new Set(lab)].map(c => [...Array(N).keys()].filter(i => lab[i] === c)).sort((a, b) => a[0] - b[0]);
+  const out = new Int32Array(N);
+  coms.forEach((c, q) => c.forEach(i => { out[i] = q; }));
+  return { lab: out, coms };
+}
+function ariDN(a, b, N) {              // índice de Rand ajustado
+  const key = new Map(), ca = new Map(), cb = new Map(), c2 = n => n * (n - 1) / 2;
+  for (let i = 0; i < N; i++) { const k = a[i] + ',' + b[i]; key.set(k, (key.get(k) || 0) + 1); ca.set(a[i], (ca.get(a[i]) || 0) + 1); cb.set(b[i], (cb.get(b[i]) || 0) + 1); }
+  const sij = [...key.values()].reduce((s, n) => s + c2(n), 0), sa = [...ca.values()].reduce((s, n) => s + c2(n), 0), sb = [...cb.values()].reduce((s, n) => s + c2(n), 0);
+  const exp = sa * sb / c2(N), mx = (sa + sb) / 2;
+  return mx === exp ? 1 : (sij - exp) / (mx - exp);
+}
+function corrW(sim, a, nv) {
+  const N = sim.N, mu = new Float64Array(N), sd = new Float64Array(N), W = new Float32Array(N * N);
+  for (let i = 0; i < N; i++) {
+    const z = sim.z[i];
+    let m = 0, v = 0;
+    for (let q = a; q < a + nv; q++) m += z[q];
+    m /= nv;
+    for (let q = a; q < a + nv; q++) v += (z[q] - m) ** 2;
+    mu[i] = m; sd[i] = Math.sqrt(v);
+  }
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    let c = 0;
+    const zi = sim.z[i], zj = sim.z[j];
+    for (let q = a; q < a + nv; q++) c += (zi[q] - mu[i]) * (zj[q] - mu[j]);
+    W[i * N + j] = W[j * N + i] = sd[i] > 1e-12 && sd[j] > 1e-12 ? Math.max(0, c / (sd[i] * sd[j])) : 0;
+  }
+  return W;
+}
+// disposición de resortes en 3D según W (análoga a nx.spring_layout con peso), con arranque en la anterior
+function spring3D(W, N, start, iters) {
+  const P = start.map(p => p.slice()), k = 0.55;
+  for (let it = 0, temp = iters > 100 ? 0.2 : 0.07; it < iters; it++, temp *= 0.985) {
+    const D = P.map(() => [0, 0, 0]);
+    for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
+      const dv = [0, 1, 2].map(q => P[a][q] - P[b][q]), d = Math.hypot(...dv) || 1e-3;
+      const f = k * k / d - 1.6 * W[a * N + b] ** 2 * d * d / k;
+      for (let q = 0; q < 3; q++) { D[a][q] += dv[q] / d * f; D[b][q] -= dv[q] / d * f; }
+    }
+    for (let a = 0; a < N; a++) {
+      for (let q = 0; q < 3; q++) D[a][q] -= 0.06 * P[a][q];
+      const d = Math.hypot(...D[a]) || 1e-3, s = Math.min(d, temp) / d;
+      for (let q = 0; q < 3; q++) P[a][q] += D[a][q] * s;
+    }
+  }
+  const c = [0, 1, 2].map(q => P.reduce((s, p) => s + p[q], 0) / N), R = Math.max(...P.map(p => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]))) || 1;
+  return P.map(p => p.map((v, q) => (v - c[q]) / R));
+}
+
+function labCL() {
+  let onResize = () => {};
+  loadThree().then(T => { onResize = buildCL(T); }).catch(() => { $('#labcl').hidden = true; });
+  return () => onResize();
+}
+
+function buildCL(T) {
+  const canvas = $('#cl-canvas'), stage = $('#cl-stage3'), tip = $('#cl-tip'), busy = $('#cl-busy'), cm = $('#cl-mat'), ct = $('#cl-ts'), comsEl = $('#cl-coms');
+  const iK = $('#cl-k'), iZ = $('#cl-sz'), iW = $('#cl-w'), iT = $('#cl-time');
+  const N = DN_X0.length, REF = Int32Array.from(DN_X0, v => v < X0C ? 0 : 1), VIEW = { yaw: -0.6, pitch: 0.38, dist: 5.2 }, STEP = 200;    // paso de 1 000
+  const METHODS = [
+    { id: 'consenso', label: 'Consenso', f: W => consensusDN(W, N, 50).lab },
+    { id: 'louvain', label: 'Louvain', f: W => louvainLite(W, N, mulberry32(42)) },
+    { id: 'cnm', label: 'Greedy (CNM)', f: W => cnmDN(W, N) },
+    { id: 'lpa', label: 'Propagación de etiquetas', f: W => lpaDN(W, N, mulberry32(42)) },
+    { id: 'esp', label: 'Espectral', f: W => spectralDN(W, N, mulberry32(42)) },
+  ];
+  const SCEN = [
+    { id: 'sub', label: R`\(K_{\rm sub}\)`, K: DN_K.sub, sz: 0, T: 60000, note: 'Sin ruido: solo el foco tiene crisis.' },
+    { id: 'sup', label: R`\(K_{\rm sup}\)`, K: DN_K.sup, sz: 0, T: 60000, note: 'Sin ruido: cascadas completas cada ~16 000.' },
+    { id: 'ruido', label: R`\(K_{\rm ruido}\) con ruido`, K: DN_K.ruido, sz: 7.5e-4, T: 100000, seed: CL_SEED, note: 'Una realización con ruido en que el ruido dispara una cascada completa.' },
+  ];
+  const st = { sim: null, method: 'consenso', fr: 0, playing: !reduced, spin: !reduced, ...VIEW, hover: -1, vis: false, T: 60000, seed: 3, drag: false, phase: 0, fit: 1,
+    cache: new Map(), cur: null, curKey: '', targets: null, tshown: -1, tipKey: '' };
+
+  const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(34, 1, 0.1, 60);
+  scene.add(new T.HemisphereLight(0xfff6ec, 0xa08468, 1.6));
+  const sun = new T.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+  const SC = 1.25, COLS = DN_COL.map(c => new T.Color(c)), GREY = new T.Color('#cbbfae'), CREAMc = new T.Color('#fffdf9');
+  const sphereGeo = new T.SphereGeometry(1, 28, 18), cylGeo = new T.CylinderGeometry(1, 1, 1, 8, 1, true);
+  const numSprite = (n, color) => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    g.font = '42px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color;
+    g.fillText(n, 32, 34);
+    const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true, depthWrite: false }));
+    s.scale.setScalar(0.21);
+    return s;
+  };
+  const r0 = 0.085;
+  const nodes = DN_X0.map((_, i) => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.45 })); m.userData.i = i; m.scale.setScalar(r0); scene.add(m); return m; });
+  const labels = DN_X0.map((v, i) => { const s = numSprite(i, v < X0C ? '#8f3a1f' : '#2a2018'); scene.add(s); return s; });
+  const bubbles = DN_X0.map(() => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: COLS[0], transparent: true, opacity: 0.13, depthWrite: false, roughness: 0.9 })); scene.add(m); return m; });
+  const pairs = [];
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) { const mat = new T.MeshBasicMaterial({ color: GREY.clone(), transparent: true, depthWrite: false }), m = new T.Mesh(cylGeo, mat); scene.add(m); pairs.push({ i, j, m, mat }); }
+  const P = DN_X0.map((_, i) => new T.Vector3(Math.cos(i), Math.sin(i * 1.7) * 0.3, Math.sin(i)).multiplyScalar(0.6)), UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), v3 = new T.Vector3(), tgt = new T.Vector3();
+  const colOf = (part, c) => part.coms[c].includes(0) ? 0 : 1 + (c - (part.lab[0] < c ? 1 : 0));
+
+  const nv = () => Math.min(st.sim.n, Math.round(+iW.value / 5));
+  const startOf = fr => { const n = nv(); return clamp(Math.round((fr - n / 2) / STEP) * STEP, 0, st.sim.n - n); };
+  function analyse(a) {
+    const key = st.method + ':' + a + ':' + nv();
+    if (st.cache.has(key)) return st.cache.get(key);
+    const W = corrW(st.sim, a, nv()), m = METHODS.find(q => q.id === st.method), part = partition(m.f(W), N);
+    let whi = 0;
+    for (let q = 0; q < N * N; q++) whi = Math.max(whi, W[q]);
+    const n = nv(), crisis = part.coms.map(c => { let k = 0; for (let q = a; q < a + n; q++) { let s = 0; for (const i of c) s += st.sim.s[i][q]; if (s / c.length > 0.5) k++; } return k / n; });
+    const res = { a, W, whi, ...part, Q: modQ(W, part.lab, N), ari: ariDN(part.lab, REF, N), crisis };
+    st.cache.set(key, res);
+    return res;
+  }
+  function refresh() {
+    const a = startOf(st.fr), cur = analyse(a), key = st.method + ':' + a + ':' + nv();
+    if (key === st.curKey) return;
+    st.curKey = key; st.cur = cur;
+    st.targets = spring3D(cur.W, N, st.targets || P.map(p => [p.x / SC, p.y / SC, p.z / SC]), st.targets ? 70 : 300);
+    const sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), n = nv();
+    let simul = 0, recS = 0;
+    for (let q = a; q < a + n; q++) { let s = 0; for (let i = 0; i < N; i++) s += st.sim.s[i][q]; simul = Math.max(simul, s); }
+    for (const i of sanas) { for (let q = a; q < a + n; q++) if (st.sim.s[i][q]) { recS++; break; } }
+    $('#cl-read').innerHTML =
+      `<div><dt>Comunidades</dt><dd>${cur.coms.length}</dd></div>` +
+      `<div><dt>Modularidad ${R`\(Q\)`}</dt><dd>${cur.Q.toFixed(3)}</dd></div>` +
+      `<div><dt>ARI vs {foco, sanas}</dt><dd>${cur.ari.toFixed(2)}</dd></div>` +
+      `<div><dt>En crisis a la vez (máx.)</dt><dd class="${simul > 2 ? 'epi' : ''}">${simul}</dd></div>` +
+      `<div><dt>Sanas con crisis en la ventana</dt><dd class="${recS ? 'epi' : 'sano'}">${recS} / ${sanas.length}</dd></div>`;
+    tex($('#cl-read'));
+    comsEl.innerHTML = cur.coms.map((c, q) =>
+      `<li class="${cur.crisis[q] > 0 ? 'crisis' : ''}"><span class="sw" style="background:${DN_COL[colOf(cur, q) % DN_COL.length]}"></span>` +
+      `<span class="mem">${c.map(i => `<b class="${DN_X0[i] < X0C ? 'epi' : ''}">${i}</b>`).join('')}</span>` +
+      `<span class="st">${(100 * cur.crisis[q]).toFixed(1)} % en crisis</span></li>`).join('');
+    if (M && !reduced) M.animate(comsEl, { opacity: [0.4, 1] }, { duration: 0.25 });
+  }
+
+  function update(dt) {
+    const cur = st.cur, k = Math.min(1, dt * 0.005);
+    for (let i = 0; i < N; i++) {
+      tgt.set(...st.targets[i]).multiplyScalar(SC);
+      P[i].lerp(tgt, reduced ? 1 : k);
+      const c = colOf(cur, cur.lab[i]) % DN_COL.length, ict = st.sim.s[i][st.fr];
+      nodes[i].position.copy(P[i]); nodes[i].material.color.copy(COLS[c]).lerp(CREAMc, ict ? 0 : 0.25);
+      nodes[i].material.emissive?.copy(COLS[c]).multiplyScalar(ict ? 0.35 + (reduced ? 0 : 0.2 * Math.sin(st.phase * 10 + i)) : 0);
+      nodes[i].scale.setScalar(r0 * (st.hover === i ? 1.35 : 1) * (ict ? 1.25 : 1));
+      labels[i].position.copy(P[i]).y += r0 * 2.6;
+    }
+    bubbles.forEach((b, q) => {
+      const com = cur.coms[q];
+      b.visible = !!com;
+      if (!com) return;
+      v3.set(0, 0, 0);
+      for (const i of com) v3.addScaledVector(P[i], 1 / com.length);
+      b.position.copy(v3);
+      b.scale.setScalar(Math.max(...com.map(i => P[i].distanceTo(v3))) + 0.2);
+      b.material.color.copy(COLS[colOf(cur, q) % DN_COL.length]);
+      b.material.opacity = cur.crisis[q] > 0 ? 0.2 : 0.11;
+    });
+    for (const p of pairs) {
+      const w = cur.W[p.i * N + p.j], u = cur.whi > 0 ? w / cur.whi : 0, same = cur.lab[p.i] === cur.lab[p.j], hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
+      p.m.visible = u > 0.05;
+      if (!p.m.visible) continue;
+      d.subVectors(P[p.j], P[p.i]);
+      const len = d.length();
+      p.m.position.copy(P[p.i]).addScaledVector(d, 0.5);
+      p.m.quaternion.setFromUnitVectors(UP, d.divideScalar(len || 1));
+      const rad = 0.002 + 0.02 * u * u;
+      p.m.scale.set(rad, len, rad);
+      p.mat.color.copy(same ? COLS[colOf(cur, cur.lab[p.i]) % DN_COL.length] : GREY);
+      p.mat.opacity = (same ? 0.2 + 0.7 * u : 0.08 + 0.3 * u) * (hot ? 1 : 0.15);
+    }
+  }
+
+  function drawMat() {
+    const cur = st.cur, { g, w, h } = fit(cm);
+    g.clearRect(0, 0, w, h);
+    const ord = cur.coms.flatMap(c => [...c].sort((a, b) => DN_X0[a] - DN_X0[b])), size = Math.min(w - 40, h - 22), cell = size / N, ox = (w - size) / 2 + 10, oy = 16;
+    g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center';
+    ord.forEach((i, r) => {
+      g.fillStyle = DN_X0[i] < X0C ? '#8f3a1f' : C.muted;
+      g.fillText(i, ox + (r + .5) * cell, 11); g.fillText(i, ox - 14, oy + (r + .5) * cell + 4);
+      ord.forEach((j, c) => {
+        const u = i === j ? 0 : cur.W[i * N + j] / (cur.whi || 1);
+        g.fillStyle = i === j ? '#faf5ec' : mix([240, 230, 214], ACC, u);
+        g.globalAlpha = st.hover < 0 || st.hover === i || st.hover === j ? 1 : 0.35;
+        g.fillRect(ox + c * cell + .5, oy + r * cell + .5, cell - 1, cell - 1);
+      });
+    });
+    g.globalAlpha = 1;
+    let s0 = 0;
+    cur.coms.forEach((c, q) => {
+      g.strokeStyle = DN_COL[colOf(cur, q) % DN_COL.length]; g.lineWidth = 2.5;
+      g.strokeRect(ox + s0 * cell, oy + s0 * cell, c.length * cell, c.length * cell);
+      s0 += c.length;
+    });
+  }
+  function drawTs() {
+    const s = st.sim, { g, w, h } = fit(ct), { X, Y, m } = frame(g, w, h, [0, s.T], [-2.2, 1.6]), a = startOf(st.fr), b = a + nv() - 1;
+    g.fillStyle = rgba([197, 138, 42], .16);
+    g.fillRect(X(s.t[a]), m.t, X(s.t[b]) - X(s.t[a]), h - m.t - m.b);
+    g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(-0.5)); g.lineTo(w - 10, Y(-0.5)); g.stroke(); g.setLineDash([]);
+    const stepK = Math.max(1, Math.floor(s.n / (w * 1.5)));
+    for (let i = N - 1; i >= 0; i--) {
+      const epi = DN_X0[i] < X0C, on = st.hover < 0 || st.hover === i;
+      g.beginPath();
+      for (let k = 0; k < s.n; k += stepK) { const px = X(s.t[k]), py = Y(s.x[i][k]); k ? g.lineTo(px, py) : g.moveTo(px, py); }
+      stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .55) : .1), epi || st.hover === i ? 1.6 : 1);
+    }
+    const px = X(s.t[st.fr]);
+    g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+  }
+
+  let lastDraw = 0;
+  function draw(now = performance.now()) {
+    if (!st.sim) return;
+    refresh();
+    update(now - lastDraw || 16); lastDraw = now;
+    const cp = Math.cos(st.pitch), dist = st.dist * st.fit;
+    camera.position.set(dist * cp * Math.sin(st.yaw), dist * Math.sin(st.pitch), dist * cp * Math.cos(st.yaw));
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    if (st.tshown !== st.fr) {
+      st.tshown = st.fr;
+      drawMat(); drawTs();
+      iT.value = st.fr; iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
+      const o = $('#cl-tout'), a = startOf(st.fr), txt = `t \\in [${Math.round(st.sim.t[a])},\\ ${Math.round(st.sim.t[a + nv() - 1])}]`;
+      if (window.katex) katex.render(txt, o, { throwOnError: false }); else o.textContent = txt;
+    }
+    if (st.hover >= 0) showTip();
+  }
+  const redraw2d = () => { st.tshown = -1; draw(); };
+  function showTip() {
+    const i = st.hover, cur = st.cur, key = i + ':' + st.curKey;
+    if (key !== st.tipKey) {
+      st.tipKey = key;
+      const nb = [...Array(N).keys()].filter(j => j !== i).sort((a, b) => cur.W[i * N + b] - cur.W[i * N + a])[0];
+      tip.innerHTML = `nodo ${i} · ${DN_X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${DN_X0[i].toFixed(3)}\)`}<br>` +
+        `comunidad ${cur.lab[i] + 1} de ${cur.coms.length}<br>mayor ${R`\(W_{${i}j}\)`}: con ${nb} (${cur.W[i * N + nb].toFixed(2)})`;
+      tex(tip);
+    }
+    v3.copy(P[i]).project(camera);
+    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, Math.max(0, stage.clientWidth - 250)) + 'px';
+    tip.style.top = ((1 - v3.y) / 2 * stage.clientHeight + 16) + 'px';
+  }
+
+  // ---- simulación y momentos de la cascada
+  function simulateNow() {
+    const K = +iK.value, sz = +iZ.value;
+    st.sim = simDN({ K, sx: sz > 0 ? 0.02 : 0, sz, T: st.T, seed: st.seed });
+    st.cache.clear(); st.curKey = '';
+    if (st.fr > st.sim.n - 1) st.fr = 0;
+    iT.max = st.sim.n - 1;
+    stageBtns();
+    redraw2d();
+  }
+  // antes: última ventana sin crisis sanas previa a la de más regiones en crisis a la vez; después: la primera tranquila siguiente
+  function stages() {
+    const s = st.sim, n = nv(), sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), wins = [];
+    for (let a = 0; a + n <= s.n; a += STEP) {
+      let simul = 0, rec = 0;
+      for (let q = a; q < a + n; q++) { let t = 0; for (let i = 0; i < N; i++) t += s.s[i][q]; simul = Math.max(simul, t); }
+      for (const i of sanas) for (let q = a; q < a + n; q++) if (s.s[i][q]) { rec++; break; }
+      wins.push({ a, simul, rec });
+    }
+    let wd = 0;
+    wins.forEach((w, q) => { if (w.simul > wins[wd].simul) wd = q; });
+    const quiet = wins.map((w, q) => w.rec === 0 ? q : -1).filter(q => q >= 0);
+    const pick = q => q == null || q < 0 ? null : wins[q].a + Math.round(n / 2);
+    return wins[wd].rec ? { antes: pick(quiet.filter(q => q < wd).pop()), durante: pick(wd), despues: pick(quiet.find(q => q > wd)) } : {};
+  }
+  function stageBtns() {
+    st.stages = stages();
+    $$('#cl-stage button').forEach(b => { b.disabled = st.stages[b.dataset.v] == null; b.setAttribute('aria-pressed', 'false'); });
+  }
+
+  // ---- interacción
+  const ray = new T.Raycaster(), ndc = new T.Vector2();
+  let lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => { st.drag = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+  canvas.addEventListener('pointermove', e => {
+    if (st.drag) {
+      st.yaw -= (e.clientX - lx) * 0.009; st.pitch = clamp(st.pitch + (e.clientY - ly) * 0.007, -1.2, 1.35);
+      lx = e.clientX; ly = e.clientY;
+    } else if (st.sim) {
+      const b = canvas.getBoundingClientRect();
+      ndc.set((e.clientX - b.left) / b.width * 2 - 1, 1 - (e.clientY - b.top) / b.height * 2);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(nodes)[0], h = hit ? hit.object.userData.i : -1;
+      if (h !== st.hover) { st.hover = h; st.tshown = -1; }
+      tip.classList.toggle('on', st.hover >= 0);
+      canvas.style.cursor = st.hover >= 0 ? 'pointer' : 'grab';
+    }
+    draw();
+  });
+  const release = () => { st.drag = false; canvas.style.cursor = 'grab'; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointerleave', () => { if (!st.drag && st.hover >= 0) { st.hover = -1; tip.classList.remove('on'); redraw2d(); } });
+  $('#cl-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); draw(); };
+  $('#cl-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); draw(); };
+  $('#cl-reset').onclick = () => { Object.assign(st, VIEW); draw(); };
+
+  let timer;
+  const rebuild = () => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { simulateNow(); busy.classList.remove('on'); }, 160); };
+  const pressed = (host, test) => $$(`${host} .btn`).forEach(b => b.setAttribute('aria-pressed', String(test(b._v))));
+  const upK = bindRange(iK, $('#cl-ko'), 3, () => { pressed('#cl-esc', () => false); rebuild(); });
+  const upZ = bindRange(iZ, $('#cl-szo'), 5, () => { pressed('#cl-esc', () => false); st.T = +iZ.value > 0 ? 100000 : 60000; rebuild(); });
+  bindRange(iW, $('#cl-wo'), 0, () => { st.cache.clear(); stageBtns(); redraw2d(); });
+  presetButtons($('#cl-met'), METHODS.map(m => ({ v: m.id, label: m.label })), v => { st.method = v; pressed('#cl-met', q => q === v); st.curKey = ''; redraw2d(); });
+  presetButtons($('#cl-esc'), SCEN.map(s => ({ v: s.id, label: s.label })), v => {
+    const s = SCEN.find(q => q.id === v);
+    iK.value = s.K; iZ.value = s.sz; upK(); upZ(); st.T = s.T; if (s.seed) st.seed = s.seed;
+    pressed('#cl-esc', q => q === v); $('#cl-escnote').textContent = s.note; st.fr = 0; rebuild();
+  });
+  $$('#cl-met .btn, #cl-esc .btn').forEach(b => { b.style.fontFamily = 'var(--font-tex)'; });
+  tex($('#cl-esc'));
+  pressed('#cl-met', q => q === st.method);
+  $$('#cl-stage button').forEach(b => b.onclick = () => {
+    const fr = st.stages[b.dataset.v];
+    if (fr == null) return;
+    $$('#cl-stage button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st.fr = fr; setPlay(false); redraw2d();
+  });
+  $('#cl-new').onclick = () => { st.seed++; pressed('#cl-esc', () => false); rebuild(); };
+  $('#cl-spin').onclick = e => { st.spin = !st.spin; e.currentTarget.setAttribute('aria-pressed', String(st.spin)); };
+  $('#cl-spin').setAttribute('aria-pressed', String(st.spin));
+  const setPlay = v => { st.playing = v; $('#cl-play').classList.toggle('is-playing', v); };
+  $('#cl-play').onclick = () => setPlay(!st.playing);
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); draw(); });
+  const seek = e => { const r = ct.getBoundingClientRect(); st.fr = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * (st.sim.n - 1)); setPlay(false); draw(); };
+  ct.addEventListener('pointerdown', e => { seek(e); ct.setPointerCapture(e.pointerId); ct.onpointermove = seek; });
+  ct.addEventListener('pointerup', () => { ct.onpointermove = null; });
+
+  const size = () => {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    st.fit = Math.max(1, 1.3 / camera.aspect);
+    redraw2d();
+  };
+  let last = 0, acc = 0;
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (!st.vis || document.hidden || !st.sim) { last = now; return; }
+    const dt = Math.min(60, now - last || 16); last = now;
+    st.phase += dt / 1000;
+    if (st.playing) { acc += dt / 1000 * st.sim.n / 45; if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; } }   // 45 s por recorrido
+    if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.1;
+    draw(now);
+  };
+  watchVisible($('#labcl'), v => { st.vis = v; });
+  setPlay(st.playing);
+  $$('#cl-esc .btn')[1].click();
+  clearTimeout(timer); simulateNow(); busy.classList.remove('on');
+  size();
+  requestAnimationFrame(loop);
+  return size;
+}
+
 /* ================= láminas de figuras ================= */
 // tamaño en píxeles de cada figura: reserva su espacio antes de que cargue, para que la página no salte
-const FIG_DIM = {"DN_grafo":[1440,600],"DN_W_sub":[1440,600],"DN_W_sup":[1440,600],"DN_W_ruido":[1440,600],"DN_tiempo_sin":[1560,1440],"DN_tiempo_con":[1560,1440],"DN_series_ruido":[1560,840],"DN_resumen":[1680,540],"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
+const FIG_DIM = {"DN_grafo":[1700,708],"DN_W_sub":[1200,1000],"DN_W_sup":[1200,1000],"DN_W_ruido":[1200,1000],"DN_tiempo_sin":[1700,1569],"DN_tiempo_con":[1700,1569],"DN_series_ruido":[1700,915],"DN_resumen":[1699,546],"CL_sub":[1700,316],"CL_sup":[1700,316],"CL_ruido":[1700,316],"CL_sin_antes":[1700,948],"CL_sin_durante":[1700,948],"CL_sin_despues":[1700,948],"CL_cascada_ruido":[1700,1569],"CL_rui_antes":[1700,948],"CL_rui_durante":[1700,948],"CL_rui_despues":[1700,948],"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
 const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap, w: FIG_DIM[id][0], h: FIG_DIM[id][1] });
 const PLATES = {
   n1: [
@@ -2025,14 +2484,29 @@ const PLATES = {
       F('G3_50_2', R`\(t = 0.9\,T\)`, R`El mismo grafo al \(90\,\%\) de la simulación.`)] },
     { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
   ],
+  clusters: [
+    { t: 'Clusters por método', wide: true, figs: [
+      F('CL_sub', R`\(K_{\rm sub}\)`, R`Las cinco particiones sobre la disposición de resortes de \(W\) y \(W\) reordenada por el consenso, con \(K_{\rm sub}\): el foco aislado y las sanas en un bloque.`),
+      F('CL_sup', R`\(K_{\rm sup}\)`, R`Con \(K_{\rm sup}\): la región 7 queda con el foco y la propagación de etiquetas junta todo en una comunidad.`),
+      F('CL_ruido', R`\(K_{\rm ruido}\)`, R`Con ruido y \(K_{\rm ruido}\): de nuevo \(\{0,1\}\) y \(\{2,\dots,9\}\) en los cinco métodos.`)] },
+    { t: 'Cascada sin ruido', wide: true, figs: [
+      F('CL_sin_antes', 'Antes', R`\(t \in [7\,001,\ 11\,001]\): el foco se separa, \(\{0\}\) y \(\{1,\dots,9\}\).`),
+      F('CL_sin_durante', 'Durante', R`\(t \in [9\,001,\ 13\,001]\), nueve regiones en crisis a la vez: \(\{0,1\}\), \(\{2,7\}\) y \(\{3,4,5,6,8,9\}\).`),
+      F('CL_sin_despues', 'Después', R`\(t \in [14\,001,\ 18\,001]\): la red vuelve a ser una sola comunidad.`)] },
+    { t: 'Cascada con ruido', wide: true, figs: [
+      F('CL_rui_antes', 'Antes', R`Realización 18 con \(K_{\rm ruido}\), \(t \in [78\,001,\ 82\,001]\): \(\{0,1\}\) y \(\{2,\dots,9\}\).`),
+      F('CL_rui_durante', 'Durante', R`\(t \in [80\,001,\ 84\,001]\): las primeras reclutadas se unen al foco, \(\{0,1,2,7\}\) y \(\{3,4,5,6,8,9\}\).`),
+      F('CL_rui_despues', 'Después', R`\(t \in [85\,001,\ 89\,001]\): \(\{0,1,3,4,5,6,8,9\}\) y \(\{2,7\}\).`),
+      F('CL_cascada_ruido', 'En el tiempo', R`Comunidades en ventanas de \(4\,000\) con paso \(1\,000\) para la realización con la cascada: estado de crisis, pertenencia a la comunidad del foco, fracción en crisis y tamaños.`)] },
+  ],
   dinamica: [
     { t: 'Grafo completo', wide: true, figs: [F('DN_grafo', '', R`Matriz de adyacencia \(A_{ij} = 1\) y su grafo: una sola componente conexa. En rojo el foco \((x_0 = 2.3,\ 2.4)\).`)] },
-    { t: 'Matriz dinámica y consenso', wide: true, figs: [
-      F('DN_W_sub', R`\(K_{\rm sub}\)`, R`\(W_{ij} = \max(\operatorname{corr}(z_i, z_j), 0)\) y grafo de consenso \(P_{ij} \gt 0.5\) con \(K_{\rm sub} = 2.115\): dos componentes, \(\{0,1\}\) y \(\{2,\dots,9\}\).`),
-      F('DN_W_sup', R`\(K_{\rm sup}\)`, R`Con \(K_{\rm sup} = 2.45\) la región 7 se une al foco: \(\{0,1,7\}\) y \(\{2,3,4,5,6,8,9\}\).`),
-      F('DN_W_ruido', R`\(K_{\rm ruido}\)`, R`Con ruido y \(K_{\rm ruido} = 2.327\) \((T = 300\,000)\): de nuevo \(\{0,1\}\) y \(\{2,\dots,9\}\).`)] },
+    { t: 'Matriz dinámica', wide: true, figs: [
+      F('DN_W_sub', R`\(K_{\rm sub}\)`, R`\(W_{ij} = \max(\operatorname{corr}(z_i, z_j), 0)\) con \(K_{\rm sub} = 2.115\): un bloque \(\{0,1\}\) y otro \(\{2,\dots,9\}\).`),
+      F('DN_W_sup', R`\(K_{\rm sup}\)`, R`\(W\) con \(K_{\rm sup} = 2.45\); el consenso da \(\{0,1,7\}\) y \(\{2,3,4,5,6,8,9\}\).`),
+      F('DN_W_ruido', R`\(K_{\rm ruido}\)`, R`\(W\) con ruido y \(K_{\rm ruido} = 2.327\) \((T = 300\,000)\): de nuevo \(\{0,1\}\) y \(\{2,\dots,9\}\).`)] },
     { t: 'Comunidades en el tiempo', wide: true, figs: [
-      F('DN_tiempo_sin', 'Sin ruido', R`\(K_{\rm sup}\), \(T = 150\,000\), ventanas de \(15\,000\) con paso \(2\,500\): (a) estado de crisis, (b) pertenencia a la comunidad del foco, (c) fracción de la ventana con la comunidad en crisis y (d) tamaño de la comunidad del foco.`),
+      F('DN_tiempo_sin', 'Sin ruido', R`\(K_{\rm sup}\), \(T = 150\,000\), ventanas de \(4\,000\) con paso \(1\,000\): (a) estado de crisis, (b) pertenencia a la comunidad del foco, (c) fracción de la ventana con la comunidad en crisis y (d) tamaño de la comunidad del foco.`),
       F('DN_tiempo_con', 'Con ruido', R`Los mismos paneles con ruido y \(K_{\rm ruido}\): solo la región 7 se une al foco, en las ventanas con sus crisis.`)] },
     { t: 'Series con ruido', wide: true, figs: [F('DN_series_ruido', '', R`\(x_i(t)\) y estado de crisis con \(K_{\rm ruido}\), \(\sigma_x = 0.02\), \(\sigma_z = 7.5	imes 10^{-4}\): el foco tiene \(74\) crisis por nodo y la región 7, tres.`)] },
     { t: 'Realizaciones', wide: true, figs: [F('DN_resumen', '', R`\(20\) realizaciones con \(K = 0\) contra \(20\) con \(K_{\rm ruido}\): probabilidad de quedar en la comunidad del foco y fracción del tiempo con la comunidad en crisis, por región sana.`)] },
@@ -2143,7 +2617,7 @@ function motion(m) {
 /* ================= arranque ================= */
 function boot() {
   background(); plates(); nav();
-  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d(), labDN()];
+  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d(), labDN(), labCL()];
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
   tex(document.body);

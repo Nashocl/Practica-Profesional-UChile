@@ -548,10 +548,6 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
               <input type="range" id="g3-k" min="0" max="0.6" step="0.005" value="0.1">
             </div>
             <div class="ctl">
-              <label for="g3-s"><span>Semilla de \(x_0\)</span> <output id="g3-so">42</output></label>
-              <input type="range" id="g3-s" min="1" max="99" step="1" value="42">
-            </div>
-            <div class="ctl">
               <div class="lbl"><span>Dirección del grafo</span></div>
               <div class="seg" id="g3-dir"><button type="button" data-v="A" aria-pressed="true">\(A\) (original)</button><button type="button" data-v="AT" aria-pressed="false">\(A^{\mathsf T}\) (transpuesta)</button></div>
             </div>
@@ -706,10 +702,6 @@ dz_i &amp;= \frac{1}{\tau_0}\Big[h(x_i) - z_i - \frac{K}{N}\sum_{j} A_{ij}\,(x_j
             <div class="ctl">
               <label for="dn-w"><span>Ventana para \(W\)</span> <output id="dn-wo">15000</output></label>
               <input type="range" id="dn-w" min="5000" max="30000" step="2500" value="15000">
-            </div>
-            <div class="ctl">
-              <label for="dn-p"><span>Umbral de aristas (percentil)</span> <output id="dn-po">50</output></label>
-              <input type="range" id="dn-p" min="0" max="90" step="5" value="50">
             </div>
             <div class="ctl">
               <div class="lbl"><span>Duración \(T\)</span></div>

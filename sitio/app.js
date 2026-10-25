@@ -1139,7 +1139,7 @@ function recruitList(el, st) {
 
 function buildGraph3D(T) {
   const canvas = $('#g3-canvas'), stage = $('#g3-stage'), tip = $('#g3-tip'), busy = $('#g3-busy'), cm = $('#g3-mat'), ct = $('#g3-ts'), rec = $('#g3-rec');
-  const iN = $('#g3-n'), iF = $('#g3-f'), iK = $('#g3-k'), iS = $('#g3-s'), iT = $('#g3-time'), iL = $('#g3-layers'), iP = $('#g3-pct');
+  const iN = $('#g3-n'), iF = $('#g3-f'), iK = $('#g3-k'), iT = $('#g3-time'), iL = $('#g3-layers'), iP = $('#g3-pct');
   const axLab = $$('#g3-labels > span');
   const S = { x: 1.35, y: 0.9, z: 1.05 }, TRAIL = 220, VIEW = { yaw: -0.85, pitch: 0.36, dist: 5.6 };
   const st = { mode: 'estructura', dir: 'A', variant: 'eq8', sim: null, x0: [], nbrs: [], edges: [], Ti: [], lay: [], fr: 0, playing: !reduced, trails: true, spin: !reduced,
@@ -1200,7 +1200,7 @@ function buildGraph3D(T) {
 
   // ---- simulación y objetos
   function build() {
-    const N = +iN.value, F = Math.min(+iF.value, N - 1), seed = +iS.value, K = +iK.value, eq8 = st.variant === 'eq8';
+    const N = +iN.value, F = Math.min(+iF.value, N - 1), seed = 42, K = +iK.value, eq8 = st.variant === 'eq8';
     let x0 = NB_X0.slice();
     if (!(N === 10 && F === 2 && seed === 42)) { const r = mulberry32(seed), foci = [2.3, 2.4, 2.5, 2.2]; x0 = Array.from({ length: N }, (_, i) => i < F ? foci[i] : 2.9 + 0.6 * r()); }
     const nbrs = x0.map((xi, i) => x0.map((_, j) => j).filter(j => j !== i && (st.dir === 'A' ? x0[j] < xi : x0[j] > xi)));
@@ -1435,7 +1435,7 @@ function buildGraph3D(T) {
   let timer;
   const rebuild = () => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { build(); busy.classList.remove('on'); draw(); }, 140); };
   bindRange(iN, $('#g3-no'), 0, rebuild); bindRange(iF, $('#g3-fo'), 0, rebuild);
-  bindRange(iK, $('#g3-ko'), 3, rebuild); bindRange(iS, $('#g3-so'), 0, rebuild);
+  bindRange(iK, $('#g3-ko'), 3, rebuild);
   bindRange(iL, $('#g3-layerso'), 0, () => { buildLayers(); draw(); });
   bindRange(iP, $('#g3-pcto'), 0, () => { buildLayers(); draw(); });
   const seg = (id, fn) => $$(`#${id} button`).forEach(b => b.onclick = () => {
@@ -1649,7 +1649,7 @@ function labDN() {
 
 function buildDN(T) {
   const canvas = $('#dn-canvas'), stage = $('#dn-stage'), tip = $('#dn-tip'), busy = $('#dn-busy'), cm = $('#dn-mat'), ct = $('#dn-ts'), comsEl = $('#dn-coms');
-  const iK = $('#dn-k'), iX = $('#dn-sx'), iZ = $('#dn-sz'), iW = $('#dn-w'), iP = $('#dn-p'), iT = $('#dn-time');
+  const iK = $('#dn-k'), iX = $('#dn-sx'), iZ = $('#dn-sz'), iW = $('#dn-w'), iT = $('#dn-time');
   const axLab = $$('#dn-labels > span');
   const S = { x: 1.35, y: 0.95, z: 1.05 }, VIEW = { yaw: -0.7, pitch: 0.42, dist: 5.4 }, N = DN_X0.length;
   const ORD = DN_X0.map((v, i) => i).sort((a, b) => DN_X0[a] - DN_X0[b]);
@@ -1768,7 +1768,7 @@ function buildDN(T) {
       m.material.opacity = w.frac[c] > 0 && com.filter(i => s.s[i][k]).length / com.length > 0.5 ? 0.32 : 0.15;
     });
     // aristas sobre el percentil elegido de W en la ventana
-    const ws = pairs.map(p => w.W[p.i * N + p.j]).sort((x, y) => x - y), pos = +iP.value / 100 * (ws.length - 1), lo = Math.floor(pos);
+    const ws = pairs.map(p => w.W[p.i * N + p.j]).sort((x, y) => x - y), pos = 0.5 * (ws.length - 1), lo = Math.floor(pos);
     const cut = ws[lo] + ((ws[Math.min(lo + 1, ws.length - 1)] - ws[lo]) * (pos - lo));
     for (const p of pairs) {
       const val = w.W[p.i * N + p.j], show = val > 0 && val >= cut, hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
@@ -1906,7 +1906,6 @@ function buildDN(T) {
   const upX = bindRange(iX, $('#dn-sxo'), 3, () => { syncMode(); rebuild(); });
   const upZ = bindRange(iZ, $('#dn-szo'), 5, () => { syncMode(); rebuild(); });
   bindRange(iW, $('#dn-wo'), 0, () => later(windows));
-  bindRange(iP, $('#dn-po'), 0, draw);
   presetButtons($('#dn-ks'), [['sub', R`K_{\rm sub}`], ['ruido', R`K_{\rm ruido}`], ['c', R`K_c`], ['sup', R`K_{\rm sup}`]].map(([k, l]) => ({ v: DN_K[k], label: R`\(${l}\)` })),
     v => { iK.value = v; upK(); syncKs(); rebuild(); });
   tex($('#dn-ks'));

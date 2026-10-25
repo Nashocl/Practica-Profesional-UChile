@@ -348,3 +348,14 @@ h2 .katex, h3 .katex, .stat b .katex, .readout dd .katex { font-size: 1em; }
 @media (max-width: 520px) { [data-plates="grafo3d"] { grid-template-columns: 1fr; } }
 .plate-tabs { scrollbar-width: none; }
 .plate-tabs::-webkit-scrollbar { display: none; }
+
+/* ---- laboratorio de la dinámica normal ---- */
+.dn-coms { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dn-coms li { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 10px; font-family: var(--font-tex); font-size: 14.5px; color: var(--ink-soft); }
+.dn-coms .sw { width: 12px; height: 12px; border-radius: 50%; }
+.dn-coms .mem { display: flex; flex-wrap: wrap; gap: 4px; }
+.dn-coms .mem b { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 400; border: 2px solid var(--line); background: var(--plate); color: var(--ink); transition: background-color .3s, color .3s; }
+.dn-coms .mem b.epi { color: var(--accent-deep); }
+.dn-coms .mem b.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dn-coms .st { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.dn-coms li.crisis .st { color: var(--accent-deep); font-weight: 700; }

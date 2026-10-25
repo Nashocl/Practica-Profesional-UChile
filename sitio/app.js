@@ -1481,9 +1481,486 @@ function buildGraph3D(T) {
   return size;
 }
 
+/* ================= dinámica normal: A = 1, comunidades de W (Three.js) ================= */
+const DN_X0 = [2.3, 2.4, 3.12247881, 3.45605899, 3.28631907, 3.39365697, 3.16604852, 3.03634323, 3.23275087, 3.3965787];
+const DN_K = { sub: 2.115, c: 2.35, ruido: 2.327, sup: 2.45 };
+const DN_COL = ['#b4502c', '#66754b', '#c58a2a', '#5d7a8a', '#7a4a6a', '#8c7054', '#a0436a', '#3f6b5a', '#b08a5a', '#55606e'];
+
+// punto fijo de reposo en la rama izquierda (brentq en [-3, -4/3])
+function restX(x0) {
+  let a = -3, b = -4 / 3;
+  const f = x => cubic(x) - hEq8(x, x0);
+  for (let q = 0; q < 60; q++) { const m = (a + b) / 2; (f(a) * f(m) <= 0) ? b = m : a = m; }
+  return (a + b) / 2;
+}
+
+// Euler-Maruyama de la red completa; guarda cada 5 unidades de tiempo después del transitorio
+function simDN({ K, sx, sz, T, seed, x0 = DN_X0, dt = 0.1, every = 50, trans = 5000 }) {
+  const N = x0.length, n = Math.round(T / dt), nt = Math.round(trans / dt), ns = Math.floor((n - nt) / every);
+  const x = new Float64Array(N), z = new Float64Array(N), on = new Uint8Array(N), crises = new Int32Array(N);
+  for (let i = 0; i < N; i++) { x[i] = x0[i] > X0C ? restX(x0[i]) : -1.5; z[i] = hEq8(x[i], x0[i]); on[i] = x[i] > -0.5; }
+  const X = x0.map(() => new Float32Array(ns)), Z = x0.map(() => new Float32Array(ns)), S = x0.map(() => new Uint8Array(ns));
+  const r = mulberry32(seed), ax = sx * Math.sqrt(dt), az = sz * Math.sqrt(dt), KN = K / N, noisy = sx > 0 || sz > 0;
+  let spare = NaN;
+  const gauss = () => {      // Box-Muller; la misma semilla da la misma realización al mover σ
+    if (spare === spare) { const g = spare; spare = NaN; return g; }
+    const u = Math.sqrt(-2 * Math.log(1 - r())), v = 6.283185307179586 * r();
+    spare = u * Math.sin(v);
+    return u * Math.cos(v);
+  };
+  for (let k = 1; k <= n; k++) {
+    let sum = 0;
+    for (let i = 0; i < N; i++) sum += x[i];
+    for (let i = 0; i < N; i++) {
+      const xi = x[i];
+      let dx = (-xi * xi * xi - 2 * xi * xi + 1 - z[i] + I1) * dt;
+      let dz = (hEq8(xi, x0[i]) - z[i] - KN * (sum - N * xi)) * dt / TAU0;     // sum_j (x_j - x_i) = sum - N x_i
+      if (noisy) { dx += ax * gauss(); dz += az * gauss(); }
+      x[i] = xi + dx; z[i] += dz;
+      const up = x[i] > -0.5;
+      if (up && !on[i] && k > nt) crises[i]++;
+      on[i] = up || (on[i] && x[i] >= -1) ? 1 : 0;
+    }
+    if (k > nt && (k - nt) % every === 0) {
+      const q = (k - nt) / every - 1;
+      if (q < ns) for (let i = 0; i < N; i++) { X[i][q] = x[i]; Z[i][q] = z[i]; S[i][q] = on[i]; }
+    }
+  }
+  return { N, n: ns, t: Float32Array.from({ length: ns }, (_, q) => (q + 1) * every * dt), T: ns * every * dt, x: X, z: Z, s: S, crises };
+}
+
+// ---- comunidades: modularidad, Louvain reducido y consenso
+function modQ(W, lab, N) {
+  const k = new Float64Array(N);
+  let m2 = 0;
+  for (let i = 0; i < N; i++) { for (let j = 0; j < N; j++) k[i] += W[i * N + j]; m2 += k[i]; }
+  if (!m2) return 0;
+  let q = 0;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (lab[i] === lab[j]) q += W[i * N + j] - k[i] * k[j] / m2;
+  return q / m2;
+}
+function louvainLite(W, N, r) {
+  const lab = Int32Array.from({ length: N }, (_, i) => i);
+  let best = modQ(W, lab, N), moved = true;
+  while (moved) {                 // movimientos locales en orden aleatorio
+    moved = false;
+    const order = [...lab.keys()].sort(() => r() - 0.5);
+    for (const i of order) {
+      const own = lab[i];
+      let bc = own, bq = best;
+      for (const c of new Set(lab)) {
+        if (c === own) continue;
+        lab[i] = c;
+        const q = modQ(W, lab, N);
+        if (q > bq + 1e-12) { bq = q; bc = c; }
+      }
+      lab[i] = bc;
+      if (bc !== own) { best = bq; moved = true; }
+    }
+  }
+  for (;;) {                      // fusión de comunidades completas, como la agregación de Louvain
+    const cs = [...new Set(lab)];
+    let bq = best, pair = null;
+    for (let a = 0; a < cs.length; a++) for (let b = a + 1; b < cs.length; b++) {
+      const tmp = lab.map(c => c === cs[b] ? cs[a] : c), q = modQ(W, tmp, N);
+      if (q > bq + 1e-12) { bq = q; pair = [cs[a], cs[b]]; }
+    }
+    if (!pair) break;
+    for (let i = 0; i < N; i++) if (lab[i] === pair[1]) lab[i] = pair[0];
+    best = bq;
+  }
+  return lab;
+}
+function consensusDN(W, N, runs = 20) {
+  const P = new Float32Array(N * N);
+  for (let s = 0; s < runs; s++) {
+    const lab = louvainLite(W, N, mulberry32(s + 1));
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (lab[i] === lab[j]) P[i * N + j] += 1 / runs;
+  }
+  // componentes conexas del grafo P_ij > 0.5
+  const lab = new Int32Array(N).fill(-1);
+  let nc = 0;
+  for (let i = 0; i < N; i++) {
+    if (lab[i] >= 0) continue;
+    const stack = [i]; lab[i] = nc;
+    while (stack.length) { const a = stack.pop(); for (let b = 0; b < N; b++) if (lab[b] < 0 && P[a * N + b] > 0.5) { lab[b] = nc; stack.push(b); } }
+    nc++;
+  }
+  return { lab, coms: Array.from({ length: nc }, (_, c) => [...lab.keys()].filter(i => lab[i] === c)) };
+}
+
+// W en ventanas deslizantes, comunidades de consenso y disposición en el plano que sigue a la anterior
+function windowsDN(sim, win, step = 2500) {
+  const N = sim.N, nv = Math.min(sim.n, Math.round(win / 5)), ns = Math.max(1, Math.round(step / 5)), out = [];
+  let pos = Array.from({ length: N }, (_, i) => [Math.cos(i / N * 6.2832), Math.sin(i / N * 6.2832)]);
+  for (let a = 0; a + nv <= sim.n; a += ns) {
+    const mu = new Float64Array(N), sd = new Float64Array(N), W = new Float32Array(N * N);
+    for (let i = 0; i < N; i++) {
+      const z = sim.z[i];
+      let m = 0, v = 0;
+      for (let q = a; q < a + nv; q++) m += z[q];
+      m /= nv;
+      for (let q = a; q < a + nv; q++) v += (z[q] - m) ** 2;
+      mu[i] = m; sd[i] = Math.sqrt(v);
+    }
+    let wlo = Infinity, whi = 0;
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      let c = 0;
+      const zi = sim.z[i], zj = sim.z[j];
+      for (let q = a; q < a + nv; q++) c += (zi[q] - mu[i]) * (zj[q] - mu[j]);
+      const w = sd[i] > 1e-12 && sd[j] > 1e-12 ? Math.max(0, c / (sd[i] * sd[j])) : 0;
+      W[i * N + j] = W[j * N + i] = w;
+      wlo = Math.min(wlo, w); whi = Math.max(whi, w);
+    }
+    const { lab, coms } = consensusDN(W, N);
+    const frac = coms.map(c => { let n = 0; for (let q = a; q < a + nv; q++) { let m = 0; for (const i of c) m += sim.s[i][q]; if (m / c.length > 0.5) n++; } return n / nv; });
+    pos = layoutDN(W, lab, N, pos, wlo, whi, out.length ? 60 : 300);
+    out.push({ a, b: a + nv, c: a + nv / 2, W, whi, lab, coms, frac, Q: modQ(W, lab, N), pos });
+  }
+  return out;
+}
+function layoutDN(W, lab, N, start, lo, hi, iters) {
+  const P = start.map(p => p.slice()), k = 0.75, span = hi - lo || 1;
+  for (let it = 0, temp = iters > 100 ? 0.25 : 0.08; it < iters; it++, temp *= 0.985) {
+    const D = P.map(() => [0, 0]);
+    for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
+      const dx = P[a][0] - P[b][0], dy = P[a][1] - P[b][1], d = Math.hypot(dx, dy) || 1e-3;
+      const w = ((W[a * N + b] - lo) / span) ** 2 + (lab[a] === lab[b] ? 0.8 : 0);
+      const f = k * k / d - w * d * d / k;        // repulsión de todos, atracción por W y por comunidad
+      D[a][0] += dx / d * f; D[a][1] += dy / d * f; D[b][0] -= dx / d * f; D[b][1] -= dy / d * f;
+    }
+    for (let a = 0; a < N; a++) {
+      D[a][0] -= 0.08 * P[a][0]; D[a][1] -= 0.08 * P[a][1];
+      const d = Math.hypot(D[a][0], D[a][1]) || 1e-3, s = Math.min(d, temp) / d;
+      P[a][0] += D[a][0] * s; P[a][1] += D[a][1] * s;
+    }
+  }
+  let cx = 0, cy = 0;
+  P.forEach(p => { cx += p[0] / N; cy += p[1] / N; });
+  const R = Math.max(...P.map(p => Math.hypot(p[0] - cx, p[1] - cy))) || 1;
+  return P.map(p => [(p[0] - cx) / R, (p[1] - cy) / R]);
+}
+
+function labDN() {
+  let onResize = () => {};
+  loadThree().then(T => { onResize = buildDN(T); }).catch(() => { $('#labdn').hidden = true; });
+  return () => onResize();
+}
+
+function buildDN(T) {
+  const canvas = $('#dn-canvas'), stage = $('#dn-stage'), tip = $('#dn-tip'), busy = $('#dn-busy'), cm = $('#dn-mat'), ct = $('#dn-ts'), comsEl = $('#dn-coms');
+  const iK = $('#dn-k'), iX = $('#dn-sx'), iZ = $('#dn-sz'), iW = $('#dn-w'), iP = $('#dn-p'), iT = $('#dn-time');
+  const axLab = $$('#dn-labels > span');
+  const S = { x: 1.35, y: 0.95, z: 1.05 }, VIEW = { yaw: -0.7, pitch: 0.42, dist: 5.4 }, N = DN_X0.length;
+  const ORD = DN_X0.map((v, i) => i).sort((a, b) => DN_X0[a] - DN_X0[b]);
+  const st = { sim: null, wins: [], fr: 0, playing: !reduced, spin: !reduced, ...VIEW, hover: -1, vis: false, T: 60000, seed: 7, drag: false, phase: 0, fit: 1, tshown: -1, comKey: '', tipKey: '' };
+
+  const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(34, 1, 0.1, 60);
+  scene.add(new T.HemisphereLight(0xfff6ec, 0xa08468, 1.5));
+  const sun = new T.DirectionalLight(0xffffff, 1.5);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+  scene.add(new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(2 * S.x, 2 * S.y, 2 * S.z)), new T.LineBasicMaterial({ color: 0xcbb9a0 })));
+  const yOf = x => clamp((x + 2.2) / 3.8, 0, 1) * 2 * S.y - S.y;
+  // plano del umbral de crisis x = -0.5
+  const thr = new T.Mesh(new T.PlaneGeometry(2 * S.x, 2 * S.z), new T.MeshBasicMaterial({ color: 0xb4502c, transparent: true, opacity: 0.06, side: T.DoubleSide, depthWrite: false }));
+  thr.rotation.x = -Math.PI / 2; thr.position.y = yOf(-0.5);
+  scene.add(thr);
+  scene.add(new T.LineSegments(new T.EdgesGeometry(thr.geometry), new T.LineBasicMaterial({ color: 0xd9a58c })).rotateX(-Math.PI / 2).translateZ(yOf(-0.5)));
+
+  const EPI = new T.Color('#b4502c'), CREAMc = new T.Color('#fffdf9'), BROWN = new T.Color('rgb(140,112,84)');
+  const COLS = DN_COL.map(c => new T.Color(c));
+  const sphereGeo = new T.SphereGeometry(1, 24, 16), cylGeo = new T.CylinderGeometry(1, 1, 1, 8, 1, true), discGeo = new T.CircleGeometry(1, 48);
+  const ringTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.strokeStyle = '#fff'; g.lineWidth = 13; g.beginPath(); g.arc(64, 64, 54, 0, 6.2832); g.stroke();
+    return new T.CanvasTexture(c);
+  })();
+  const ring = (color, opacity = 1) => new T.Sprite(new T.SpriteMaterial({ map: ringTex, color, transparent: true, opacity, depthWrite: false }));
+  const numSprite = (n, color) => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    g.font = '42px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color;
+    g.fillText(n, 32, 34);
+    const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true, depthWrite: false }));
+    s.scale.setScalar(0.2);
+    return s;
+  };
+  const r0 = 0.075;
+  const nodes = DN_X0.map((_, i) => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.5 })); m.userData.i = i; m.scale.setScalar(r0); scene.add(m); return m; });
+  const rings = DN_X0.map(() => { const s = ring(COLS[0]); s.scale.setScalar(r0 * 3.1); scene.add(s); return s; });
+  const halos = DN_X0.map(() => { const s = ring(EPI, 0.35); scene.add(s); return s; });
+  const labels = DN_X0.map((v, i) => { const s = numSprite(i, v < X0C ? '#8f3a1f' : '#2a2018'); scene.add(s); return s; });
+  const discs = DN_X0.map(() => {
+    const m = new T.Mesh(discGeo, new T.MeshBasicMaterial({ color: COLS[0], transparent: true, opacity: 0.16, depthWrite: false, side: T.DoubleSide }));
+    m.rotation.x = -Math.PI / 2; scene.add(m); return m;
+  });
+  const pairs = [];
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const mat = new T.MeshBasicMaterial({ color: BROWN.clone(), transparent: true, depthWrite: false }), m = new T.Mesh(cylGeo, mat);
+    scene.add(m); pairs.push({ i, j, m, mat });
+  }
+  const stems = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({ color: 0xbfae98, transparent: true, opacity: 0.8 }));
+  stems.geometry.setAttribute('position', new T.BufferAttribute(new Float32Array(N * 6), 3));
+  stems.frustumCulled = false;
+  scene.add(stems);
+  const P = DN_X0.map(() => new T.Vector3()), UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), v3 = new T.Vector3();
+  const activity = x => clamp((x + 1.4) / 1.7, 0, 1);
+
+  // ventana a la que pertenece el cuadro k: la de centro más cercano, y la interpolación de posiciones entre centros
+  function winAt(k) {
+    const W = st.wins;
+    let q = 0;
+    while (q + 1 < W.length && W[q + 1].c <= k) q++;
+    const nxt = W[Math.min(q + 1, W.length - 1)], u = nxt === W[q] ? 0 : clamp((k - W[q].c) / (nxt.c - W[q].c), 0, 1);
+    const near = u > 0.5 && nxt !== W[q] ? q + 1 : q;
+    return { a: W[q], b: nxt, u: k < W[0].c ? 0 : u, w: W[near], q: near };
+  }
+  const comColor = (win, c) => (win.coms[c].includes(0) ? 0 : 1 + (c - (win.lab[0] < c ? 1 : 0))) % DN_COL.length;   // la comunidad del foco siempre en terracota
+
+  function simulateNow() {
+    const K = +iK.value, sx = +iX.value, sz = +iZ.value;
+    st.sim = simDN({ K, sx, sz, T: st.T, seed: st.seed });
+    st.K = K; st.sx = sx; st.sz = sz;
+    if (st.fr > st.sim.n - 1) st.fr = 0;
+    iT.max = st.sim.n - 1;
+    windows();
+    const cr = st.sim.crises, sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), rec = sanas.filter(i => cr[i] > 0);
+    $('#dn-read').innerHTML =
+      `<div><dt>${R`\(K / K_c\)`}</dt><dd>${(K / DN_K.c).toFixed(3)}</dd></div>` +
+      `<div><dt>Crisis por nodo del foco</dt><dd class="epi">${cr[0]} · ${cr[1]}</dd></div>` +
+      `<div><dt>Sanas con crisis</dt><dd class="${rec.length ? 'epi' : 'sano'}">${rec.length} / ${sanas.length}</dd></div>` +
+      `<div><dt>Crisis sanas (total)</dt><dd>${rec.reduce((s, i) => s + cr[i], 0)}</dd></div>` +
+      `<div><dt>Comunidades ahora</dt><dd id="dn-nc">—</dd></div>` +
+      `<div><dt>Modularidad ${R`\(Q\)`}</dt><dd id="dn-q">—</dd></div>`;
+    tex($('#dn-read'));
+  }
+  function windows() { st.wins = windowsDN(st.sim, +iW.value); st.comKey = ''; }
+
+  function update(k) {
+    const s = st.sim, { a, b, u, w } = winAt(k);
+    let now = 0;
+    for (let i = 0; i < N; i++) {
+      const px = a.pos[i][0] + (b.pos[i][0] - a.pos[i][0]) * u, pz = a.pos[i][1] + (b.pos[i][1] - a.pos[i][1]) * u;
+      P[i].set(px * S.x * 0.82, yOf(s.x[i][k]), pz * S.z * 0.82);
+      const ict = s.s[i][k] === 1, c = comColor(w, w.lab[i]);
+      if (ict) now++;
+      nodes[i].position.copy(P[i]); nodes[i].material.color.copy(CREAMc).lerp(EPI, activity(s.x[i][k]));
+      rings[i].position.copy(P[i]); rings[i].material.color.copy(COLS[c]); rings[i].scale.setScalar(r0 * (st.hover === i ? 3.8 : 3.1));
+      halos[i].visible = ict; halos[i].position.copy(P[i]); halos[i].scale.setScalar(r0 * (4.6 + (reduced ? 0 : 0.35 * Math.sin(st.phase * 12 + i))));
+      labels[i].position.copy(P[i]).y += r0 * 2.9;
+      const arr = stems.geometry.attributes.position.array;
+      arr.set([P[i].x, P[i].y, P[i].z, P[i].x, -S.y, P[i].z], i * 6);
+    }
+    stems.geometry.attributes.position.needsUpdate = true;
+    // sombras de comunidad en el piso
+    discs.forEach((m, c) => {
+      const com = w.coms[c];
+      m.visible = !!com;
+      if (!com) return;
+      let cx = 0, cz = 0;
+      for (const i of com) { cx += P[i].x / com.length; cz += P[i].z / com.length; }
+      const rad = Math.max(...com.map(i => Math.hypot(P[i].x - cx, P[i].z - cz))) + 0.17;
+      m.position.set(cx, -S.y + 0.003 + c * 0.001, cz); m.scale.setScalar(rad); m.material.color.copy(COLS[comColor(w, c)]);
+      m.material.opacity = w.frac[c] > 0 && com.filter(i => s.s[i][k]).length / com.length > 0.5 ? 0.32 : 0.15;
+    });
+    // aristas sobre el percentil elegido de W en la ventana
+    const ws = pairs.map(p => w.W[p.i * N + p.j]).sort((x, y) => x - y), pos = +iP.value / 100 * (ws.length - 1), lo = Math.floor(pos);
+    const cut = ws[lo] + ((ws[Math.min(lo + 1, ws.length - 1)] - ws[lo]) * (pos - lo));
+    for (const p of pairs) {
+      const val = w.W[p.i * N + p.j], show = val > 0 && val >= cut, hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
+      p.m.visible = show;
+      if (!show) continue;
+      d.subVectors(P[p.j], P[p.i]);
+      const len = d.length(), uu = w.whi > 0 ? val / w.whi : 0, same = w.lab[p.i] === w.lab[p.j];
+      p.m.position.copy(P[p.i]).addScaledVector(d, 0.5);
+      p.m.quaternion.setFromUnitVectors(UP, d.divideScalar(len || 1));
+      const rad = 0.003 + 0.016 * uu * uu;
+      p.m.scale.set(rad, len, rad);
+      p.mat.color.copy(same ? COLS[comColor(w, w.lab[p.i])] : BROWN);
+      p.mat.opacity = (same ? 0.25 + 0.6 * uu : 0.1 + 0.3 * uu) * (hot ? 1 : 0.15);
+    }
+    return { now, w };
+  }
+
+  function drawMat(w) {
+    const { g, w: cw, h } = fit(cm);
+    g.clearRect(0, 0, cw, h);
+    const size = Math.min(cw - 40, h - 22), cell = size / N, ox = (cw - size) / 2 + 10, oy = 16;
+    g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center';
+    ORD.forEach((i, r) => {
+      g.fillStyle = DN_X0[i] < X0C ? '#8f3a1f' : C.muted;
+      g.fillText(i, ox + (r + .5) * cell, 11); g.fillText(i, ox - 16, oy + (r + .5) * cell + 4);
+      g.fillStyle = DN_COL[comColor(w, w.lab[i])]; g.fillRect(ox - 8, oy + r * cell + 1, 4, cell - 2);
+      ORD.forEach((j, c) => {
+        const u = i === j ? 0 : w.W[i * N + j] / (w.whi || 1);
+        g.fillStyle = i === j ? '#faf5ec' : mix([240, 230, 214], ACC, u);
+        g.globalAlpha = st.hover < 0 || st.hover === i || st.hover === j ? 1 : 0.35;
+        g.fillRect(ox + c * cell + .5, oy + r * cell + .5, cell - 1, cell - 1);
+      });
+    });
+    g.globalAlpha = 1;
+  }
+  function drawTs(win) {
+    const s = st.sim, { g, w, h } = fit(ct), { X, Y, m } = frame(g, w, h, [0, s.T], [-2.2, 1.6]);
+    g.fillStyle = rgba([197, 138, 42], .13);
+    g.fillRect(X(s.t[win.a]), m.t, X(s.t[win.b - 1]) - X(s.t[win.a]), h - m.t - m.b);
+    g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(-0.5)); g.lineTo(w - 10, Y(-0.5)); g.stroke(); g.setLineDash([]);
+    const stepK = Math.max(1, Math.floor(s.n / (w * 1.5)));
+    for (let q = N - 1; q >= 0; q--) {
+      const i = ORD[N - 1 - q], epi = DN_X0[i] < X0C, on = st.hover < 0 || st.hover === i;
+      g.beginPath();
+      for (let k = 0; k < s.n; k += stepK) { const px = X(s.t[k]), py = Y(s.x[i][k]); k ? g.lineTo(px, py) : g.moveTo(px, py); }
+      stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .55) : .1), epi || st.hover === i ? 1.7 : 1);
+    }
+    const px = X(s.t[st.fr]);
+    g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+    dot(g, px, m.t, 4, C.ink);
+  }
+  function drawComs(w, q) {
+    const s = st.sim, k = st.fr, act = DN_X0.map((_, i) => s.s[i][k]), key = q + ':' + act.join('');
+    if (key === st.comKey) return;
+    st.comKey = key;
+    comsEl.innerHTML = w.coms.map((c, ci) => {
+      const inC = c.filter(i => act[i]).length / c.length > 0.5;
+      return `<li class="${inC ? 'crisis' : ''}"><span class="sw" style="background:${DN_COL[comColor(w, ci)]}"></span>` +
+        `<span class="mem">${c.map(i => `<b class="${DN_X0[i] < X0C ? 'epi' : ''} ${act[i] ? 'on' : ''}">${i}</b>`).join('')}</span>` +
+        `<span class="st">${inC ? 'en crisis' : (100 * w.frac[ci]).toFixed(1) + ' % en crisis'}</span></li>`;
+    }).join('');
+    const nc = $('#dn-nc'), qq = $('#dn-q');
+    if (nc) nc.textContent = w.coms.length;
+    if (qq) qq.textContent = w.Q.toFixed(3);
+  }
+
+  function draw() {
+    if (!st.sim || !st.wins.length) return;
+    const { w } = update(st.fr), q = winAt(st.fr).q;
+    const cp = Math.cos(st.pitch), dist = st.dist * st.fit;
+    camera.position.set(dist * cp * Math.sin(st.yaw), dist * Math.sin(st.pitch), dist * cp * Math.cos(st.yaw));
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    [new T.Vector3(0, -S.y, S.z + 0.3), new T.Vector3(-S.x - 0.3, 0.1, -S.z)].forEach((p, n) => {
+      v3.copy(p).project(camera);
+      axLab[n].style.transform = `translate(-50%, -50%) translate(${((v3.x + 1) / 2 * sw).toFixed(1)}px, ${((1 - v3.y) / 2 * sh).toFixed(1)}px)`;
+    });
+    drawMat(w); drawTs(w); drawComs(w, q);
+    if (st.tshown !== st.fr) {
+      st.tshown = st.fr;
+      iT.value = st.fr; iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
+      const o = $('#dn-tout'), t = Math.round(st.sim.t[st.fr]);
+      if (window.katex) katex.render(`t = ${t}`, o, { throwOnError: false }); else o.textContent = 't = ' + t;
+    }
+    if (st.hover >= 0) showTip(w);
+  }
+  function showTip(w) {
+    const i = st.hover, s = st.sim, k = st.fr, key = i + ':' + k;
+    if (key !== st.tipKey) {
+      st.tipKey = key;
+      tip.innerHTML = `nodo ${i} · ${DN_X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${DN_X0[i].toFixed(3)}\)`}<br>` +
+        `${R`\(x_${i}(t) = ${s.x[i][k].toFixed(2)}\)`} · ${s.s[i][k] ? 'en crisis' : 'fuera de crisis'}<br>` +
+        `comunidad con ${w.coms[w.lab[i]].length} nodos · ${s.crises[i]} crisis`;
+      tex(tip);
+    }
+    v3.copy(P[i]).project(camera);
+    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, Math.max(0, stage.clientWidth - 250)) + 'px';
+    tip.style.top = ((1 - v3.y) / 2 * stage.clientHeight + 16) + 'px';
+  }
+
+  // ---- interacción
+  const ray = new T.Raycaster(), ndc = new T.Vector2();
+  let lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => { st.drag = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+  canvas.addEventListener('pointermove', e => {
+    if (st.drag) {
+      st.yaw -= (e.clientX - lx) * 0.009; st.pitch = clamp(st.pitch + (e.clientY - ly) * 0.007, -1.2, 1.35);
+      lx = e.clientX; ly = e.clientY;
+    } else if (st.sim) {
+      const b = canvas.getBoundingClientRect();
+      ndc.set((e.clientX - b.left) / b.width * 2 - 1, 1 - (e.clientY - b.top) / b.height * 2);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(nodes)[0];
+      st.hover = hit ? hit.object.userData.i : -1;
+      tip.classList.toggle('on', st.hover >= 0);
+      canvas.style.cursor = st.hover >= 0 ? 'pointer' : 'grab';
+    }
+    draw();
+  });
+  const release = () => { st.drag = false; canvas.style.cursor = 'grab'; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointerleave', () => { if (!st.drag) { st.hover = -1; tip.classList.remove('on'); draw(); } });
+  $('#dn-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); draw(); };
+  $('#dn-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); draw(); };
+  $('#dn-reset').onclick = () => { Object.assign(st, VIEW); draw(); };
+
+  let timer;
+  const later = fn => { busy.classList.add('on'); clearTimeout(timer); timer = setTimeout(() => { fn(); busy.classList.remove('on'); draw(); }, 160); };
+  const rebuild = () => later(simulateNow);
+  const syncMode = () => $$('#dn-mode button').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.v === 'rui') === (+iX.value > 0 || +iZ.value > 0))));
+  const syncKs = () => $$('#dn-ks .btn').forEach(b => b.setAttribute('aria-pressed', String(Math.abs(b._v - +iK.value) < 1e-9)));
+  const upK = bindRange(iK, $('#dn-ko'), 3, () => { syncKs(); rebuild(); });
+  const upX = bindRange(iX, $('#dn-sxo'), 3, () => { syncMode(); rebuild(); });
+  const upZ = bindRange(iZ, $('#dn-szo'), 5, () => { syncMode(); rebuild(); });
+  bindRange(iW, $('#dn-wo'), 0, () => later(windows));
+  bindRange(iP, $('#dn-po'), 0, draw);
+  presetButtons($('#dn-ks'), [['sub', R`K_{\rm sub}`], ['ruido', R`K_{\rm ruido}`], ['c', R`K_c`], ['sup', R`K_{\rm sup}`]].map(([k, l]) => ({ v: DN_K[k], label: R`\(${l}\)` })),
+    v => { iK.value = v; upK(); syncKs(); rebuild(); });
+  tex($('#dn-ks'));
+  $$('#dn-mode button').forEach(b => b.onclick = () => {
+    const noisy = b.dataset.v === 'rui';
+    iX.value = noisy ? 0.02 : 0; iZ.value = noisy ? 0.00075 : 0; iK.value = noisy ? DN_K.ruido : DN_K.sup;
+    upX(); upZ(); upK(); syncMode(); syncKs(); st.fr = 0; rebuild();
+  });
+  $$('#dn-t button').forEach(b => b.onclick = () => {
+    $$('#dn-t button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st.T = +b.dataset.v; st.fr = 0; rebuild();
+  });
+  $('#dn-new').onclick = () => { st.seed++; rebuild(); };
+  $('#dn-spin').onclick = e => { st.spin = !st.spin; e.currentTarget.setAttribute('aria-pressed', String(st.spin)); };
+  $('#dn-spin').setAttribute('aria-pressed', String(st.spin));
+  const setPlay = v => { st.playing = v; $('#dn-play').classList.toggle('is-playing', v); };
+  $('#dn-play').onclick = () => setPlay(!st.playing);
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); draw(); });
+  const seek = e => { const r = ct.getBoundingClientRect(); st.fr = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * (st.sim.n - 1)); setPlay(false); draw(); };
+  ct.addEventListener('pointerdown', e => { seek(e); ct.setPointerCapture(e.pointerId); ct.onpointermove = seek; });
+  ct.addEventListener('pointerup', () => { ct.onpointermove = null; });
+
+  const size = () => {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    st.fit = Math.max(1, 1.42 / camera.aspect);
+    draw();
+  };
+  let last = 0, acc = 0;
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (!st.vis || document.hidden || !st.sim) { last = now; return; }
+    const dt = Math.min(60, now - last || 16); last = now;
+    st.phase += dt / 1000;
+    if (st.playing) { acc += dt / 1000 * st.sim.n / 40; if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; } }   // 40 s por recorrido
+    if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.1;
+    if (!reduced || st.playing) draw();
+  };
+  axLab[0].textContent = 'disposición según W';
+  axLab[1].innerHTML = R`\(x_i(t)\)`;
+  tex($('#dn-labels'));
+  watchVisible($('#labdn'), v => { st.vis = v; });
+  setPlay(st.playing);
+  syncKs(); syncMode();
+  simulateNow();
+  size();
+  requestAnimationFrame(loop);
+  return size;
+}
+
 /* ================= láminas de figuras ================= */
 // tamaño en píxeles de cada figura: reserva su espacio antes de que cargue, para que la página no salte
-const FIG_DIM = {"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
+const FIG_DIM = {"DN_grafo":[1440,600],"DN_W_sub":[1440,600],"DN_W_sup":[1440,600],"DN_W_ruido":[1440,600],"DN_tiempo_sin":[1560,1440],"DN_tiempo_con":[1560,1440],"DN_series_ruido":[1560,840],"DN_resumen":[1680,540],"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
 const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap, w: FIG_DIM[id][0], h: FIG_DIM[id][1] });
 const PLATES = {
   n1: [
@@ -1547,6 +2024,18 @@ const PLATES = {
       F('G3_50_1', R`\(t = 0.5\,T\)`, R`El mismo grafo a mitad de la simulación.`),
       F('G3_50_2', R`\(t = 0.9\,T\)`, R`El mismo grafo al \(90\,\%\) de la simulación.`)] },
     { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
+  ],
+  dinamica: [
+    { t: 'Grafo completo', wide: true, figs: [F('DN_grafo', '', R`Matriz de adyacencia \(A_{ij} = 1\) y su grafo: una sola componente conexa. En rojo el foco \((x_0 = 2.3,\ 2.4)\).`)] },
+    { t: 'Matriz dinámica y consenso', wide: true, figs: [
+      F('DN_W_sub', R`\(K_{\rm sub}\)`, R`\(W_{ij} = \max(\operatorname{corr}(z_i, z_j), 0)\) y grafo de consenso \(P_{ij} \gt 0.5\) con \(K_{\rm sub} = 2.115\): dos componentes, \(\{0,1\}\) y \(\{2,\dots,9\}\).`),
+      F('DN_W_sup', R`\(K_{\rm sup}\)`, R`Con \(K_{\rm sup} = 2.45\) la región 7 se une al foco: \(\{0,1,7\}\) y \(\{2,3,4,5,6,8,9\}\).`),
+      F('DN_W_ruido', R`\(K_{\rm ruido}\)`, R`Con ruido y \(K_{\rm ruido} = 2.327\) \((T = 300\,000)\): de nuevo \(\{0,1\}\) y \(\{2,\dots,9\}\).`)] },
+    { t: 'Comunidades en el tiempo', wide: true, figs: [
+      F('DN_tiempo_sin', 'Sin ruido', R`\(K_{\rm sup}\), \(T = 150\,000\), ventanas de \(15\,000\) con paso \(2\,500\): (a) estado de crisis, (b) pertenencia a la comunidad del foco, (c) fracción de la ventana con la comunidad en crisis y (d) tamaño de la comunidad del foco.`),
+      F('DN_tiempo_con', 'Con ruido', R`Los mismos paneles con ruido y \(K_{\rm ruido}\): solo la región 7 se une al foco, en las ventanas con sus crisis.`)] },
+    { t: 'Series con ruido', wide: true, figs: [F('DN_series_ruido', '', R`\(x_i(t)\) y estado de crisis con \(K_{\rm ruido}\), \(\sigma_x = 0.02\), \(\sigma_z = 7.5	imes 10^{-4}\): el foco tiene \(74\) crisis por nodo y la región 7, tres.`)] },
+    { t: 'Realizaciones', wide: true, figs: [F('DN_resumen', '', R`\(20\) realizaciones con \(K = 0\) contra \(20\) con \(K_{\rm ruido}\): probabilidad de quedar en la comunidad del foco y fracción del tiempo con la comunidad en crisis, por región sana.`)] },
   ],
   grafo: [
     { t: 'Grafo estructural', figs: [F('G_11_0', '', R`Grafo \(A\) para \(N = 10\): en rojo los nodos con \(x_0 \lt 2.91\), en azul el resto. Etiquetas: índice \(i\) y \(x_{0,i}\).`)] },
@@ -1654,7 +2143,7 @@ function motion(m) {
 /* ================= arranque ================= */
 function boot() {
   background(); plates(); nav();
-  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d()];
+  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d(), labDN()];
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
   tex(document.body);

@@ -614,6 +614,198 @@ dz_i &amp;= \frac{1}{\tau_0}\big(h(x_i) - z_i - K(x_j - x_i)\big)\,dt + \sigma_z
 
       <div class="plates" data-plates="grafo3d"></div>
     </div>
+
+    <!-- ---- dinámica normal: A = 1, comunidades y ruido ---- -->
+    <div class="sub" id="dinamica-normal">
+      <p class="kicker" data-reveal>Sin imponer una estructura</p>
+      <h3 data-reveal>Grafo epileptogénico bajo la dinámica normal</h3>
+      <div class="cols" style="margin-bottom:22px">
+        <div class="prose" data-reveal>
+          <p>En el grafo anterior la matriz \(A\) se construía a partir de \(x_0\), así que la estructura ya venía dada por la excitabilidad. Aquí hice lo contrario: conecté todas las regiones con todas y dejé que la propia dinámica dijera qué regiones se parecen.</p>
+          <p>Trabajé con \(N = 10\) regiones: un foco \(x_0 = (2.3,\ 2.4)\) en los nodos 0 y 1, y ocho sanas con \(x_0 \sim U[2.9,\ 3.5]\) (semilla 42). Si una sana quedaba con \(x_0 \lt 2.95\) la volví a sortear, para que ninguna quedara pegada al umbral \(2.91\).</p>
+        </div>
+        <div data-reveal>
+          <p class="kicker">Objetivos</p>
+          <ol class="findings">
+            <li><span>No imponer una dinámica fija: usar \(A_{ij} = 1\) para todo \(i \neq j\) y mirar la matriz de adyacencia que produce la dinámica normal.</span></li>
+            <li><span>Estudiar las componentes conexas de esa matriz, detectar comunidades con métodos de aprendizaje en grafos y saber cuáles están en crisis.</span></li>
+            <li><span>Ver cómo entran en crisis las comunidades, primero sin ruido y después con ruido.</span></li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="cols" style="margin-bottom:22px">
+        <div class="eq" data-reveal>
+          <p class="kicker">Modelo en red con ruido aditivo · \(i = 0, \dots, N-1\)</p>
+          $$\begin{aligned}
+dx_i &amp;= \big(-x_i^3 - 2x_i^2 + 1 - z_i + I_1\big)\,dt + \sigma_x\, dW_i^{x} \\[6pt]
+dz_i &amp;= \frac{1}{\tau_0}\Big[h(x_i) - z_i - \frac{K}{N}\sum_{j} A_{ij}\,(x_j - x_i)\Big]dt + \sigma_z\, dW_i^{z}
+\end{aligned}$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Con \(A_{ij} = 1\) para \(i \neq j\) el grafo estructural es completo: una sola componente conexa, \(45\) aristas y grado \(9\) en todos los nodos. No distingue a ninguna región.</p>
+        </div>
+        <div class="eq" data-reveal>
+          <p class="kicker">Matriz de la dinámica normal</p>
+          $$W_{ij} = \max\big(\operatorname{corr}(z_i, z_j),\ 0\big), \qquad W_{ii} = 0$$
+          <p class="kicker" style="margin-top:14px">Modularidad de una partición \(\{c_i\}\)</p>
+          $$Q = \frac{1}{2m}\sum_{i,j}\Big[W_{ij} - \frac{k_i k_j}{2m}\Big]\,\delta(c_i, c_j)$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">\(k_i = \sum_j W_{ij}\) y \(2m = \sum_{i,j} W_{ij}\).</p>
+        </div>
+      </div>
+
+      <div class="cols-3" style="margin-bottom:28px">
+        <div class="eq" data-reveal>
+          <p class="kicker">Crisis con histéresis</p>
+          $$x_i \gt -0.5 \ \Rightarrow\ \text{entra}, \qquad x_i \lt -1.0 \ \Rightarrow\ \text{sale}$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Se descarta un transitorio de \(5\,000\) unidades de tiempo antes de contar.</p>
+        </div>
+        <div class="eq" data-reveal>
+          <p class="kicker">Consenso de comunidades</p>
+          $$P_{ij} = \frac{1}{50}\sum_{s=1}^{50} \delta\big(c_i^{(s)}, c_j^{(s)}\big)$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">\(50\) corridas de Louvain con semillas distintas. Las comunidades son las componentes conexas del grafo \(P_{ij} \gt 0.5\).</p>
+        </div>
+        <div class="eq" data-reveal>
+          <p class="kicker">Comunidad en crisis</p>
+          $$\frac{1}{|C|}\sum_{i \in C} \mathbb 1\{i \text{ en crisis en } t\} \gt \frac12$$
+          <p style="margin:8px 0 0;font-size:14.5px;color:var(--muted)">Una comunidad está en crisis cuando más de la mitad de sus miembros lo está.</p>
+        </div>
+      </div>
+
+      <div class="sub" style="margin-top:0">
+        <p class="kicker" data-reveal>Procedimiento</p>
+        <ol class="findings" data-reveal>
+          <li><span>Integré el sistema con Euler-Maruyama \((\Delta t = 0.1)\), con las sanas partiendo en su punto fijo de reposo y el foco en \(x = -1.5,\ z = h(x)\). Con \(\sigma_x = \sigma_z = 0\) es el caso determinista.</span></li>
+          <li><span>Barrí \(K \in [0,\ 2.5]\) (\(51\) valores, \(T = 60\,000\)) y definí \(K_c\) como el primer \(K\) en que alguna sana hace una crisis. De ahí salen \(K_{\rm sub} = 0.9\,K_c\), donde solo el foco tiene crisis, y \(K_{\rm sup}\), el menor \(K\) en que todas las sanas tienen crisis.</span></li>
+          <li><span>Con cada simulación calculé \(W\) y comparé cinco detecciones de comunidades: Louvain, Greedy (CNM), propagación de etiquetas, espectral (laplaciano normalizado y \(k\)-medias, con \(k\) por la brecha espectral) y el consenso de \(50\) Louvain. Las comparé con la partición {foco, sanas} usando el índice de Rand ajustado (ARI).</span></li>
+          <li><span>Para ver cómo entran en crisis las comunidades repetí el consenso en ventanas deslizantes de \(15\,000\) con paso \(2\,500\), y en cada una registré la comunidad del foco y la fracción de la ventana que cada comunidad pasa en crisis.</span></li>
+          <li><span>Con ruido \((\sigma_x = 0.02,\ \sigma_z = 7.5\times 10^{-4})\) hice un control con \(K = 0\) y busqué \(K_{\rm ruido}\): el \(K\) más cercano a \(K_c\) en que sin ruido no hay reclutamiento pero con ruido sí.</span></li>
+        </ol>
+      </div>
+
+      <div class="lab" id="labdn" data-reveal>
+        <div class="lab-head"><h3>Laboratorio · comunidades de la dinámica normal</h3><span class="live">Three.js · Euler-Maruyama en vivo</span></div>
+        <div class="lab-grid">
+          <div class="controls">
+            <div class="ctl">
+              <div class="lbl"><span>Dinámica</span></div>
+              <div class="seg" id="dn-mode"><button type="button" data-v="det" aria-pressed="true">Sin ruido</button><button type="button" data-v="rui" aria-pressed="false">Con ruido</button></div>
+            </div>
+            <div class="ctl">
+              <label for="dn-k"><span>Acoplamiento \(K\)</span> <output id="dn-ko">2.450</output></label>
+              <input type="range" id="dn-k" min="0" max="2.6" step="0.001" value="2.45">
+              <div class="presets" id="dn-ks" style="margin-top:8px"></div>
+            </div>
+            <div class="ctl">
+              <label for="dn-sx"><span>Ruido en actividad \(\sigma_x\)</span> <output id="dn-sxo">0.000</output></label>
+              <input type="range" id="dn-sx" min="0" max="0.06" step="0.001" value="0">
+            </div>
+            <div class="ctl">
+              <label for="dn-sz"><span>Ruido en permitividad \(\sigma_z\)</span> <output id="dn-szo">0.00000</output></label>
+              <input type="range" id="dn-sz" min="0" max="0.003" step="0.00005" value="0">
+              <small>En el estudio usé \(\sigma_x = 0.02\) y \(\sigma_z = 7.5\times 10^{-4}\).</small>
+            </div>
+            <div class="ctl">
+              <label for="dn-w"><span>Ventana para \(W\)</span> <output id="dn-wo">15000</output></label>
+              <input type="range" id="dn-w" min="5000" max="30000" step="2500" value="15000">
+            </div>
+            <div class="ctl">
+              <label for="dn-p"><span>Umbral de aristas (percentil)</span> <output id="dn-po">50</output></label>
+              <input type="range" id="dn-p" min="0" max="90" step="5" value="50">
+            </div>
+            <div class="ctl">
+              <div class="lbl"><span>Duración \(T\)</span></div>
+              <div class="seg" id="dn-t"><button type="button" data-v="60000" aria-pressed="true">\(60\,000\)</button><button type="button" data-v="150000" aria-pressed="false">\(150\,000\)</button></div>
+            </div>
+            <div class="ctl" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button type="button" class="btn ghost" id="dn-new">Nueva realización</button>
+              <button type="button" class="btn ghost" id="dn-spin" aria-pressed="true">Giro automático</button>
+            </div>
+            <dl class="readout" id="dn-read"></dl>
+          </div>
+
+          <div class="plots">
+            <div class="plots two">
+              <div class="plot g3-view">
+                <h4>Grafo · plano \(=\) disposición según \(W\) · altura \(= x_i(t)\)</h4>
+                <span class="busy" id="dn-busy">calculando…</span>
+                <div class="g3-stage" id="dn-stage">
+                  <canvas id="dn-canvas" role="img" aria-label="Grafo de la dinámica normal en tres dimensiones; arrastra para girar la vista" title="Arrastra para girar"></canvas>
+                  <div class="g3-labels" id="dn-labels" aria-hidden="true"><span></span><span></span></div>
+                  <div class="tip" id="dn-tip"></div>
+                  <div class="g3-zoom">
+                    <button type="button" class="btn ghost" id="dn-zin" aria-label="Acercar">+</button>
+                    <button type="button" class="btn ghost" id="dn-zout" aria-label="Alejar">−</button>
+                    <button type="button" class="btn ghost" id="dn-reset">Vista inicial</button>
+                  </div>
+                </div>
+                <div class="legend"><span>anillo y sombra: comunidad de consenso</span><span><i style="background:var(--accent)"></i>número rojo: foco</span><span>halo: región en crisis</span></div>
+              </div>
+              <div style="display:grid;gap:12px;align-content:start;min-width:0">
+                <div class="plot"><h4>Matriz \(W_{ij}\) en la ventana actual</h4><canvas id="dn-mat" height="210"></canvas></div>
+                <div class="plot" style="padding:12px 14px 14px">
+                  <h4 style="margin:0 0 10px">Comunidades de consenso</h4>
+                  <ul class="dn-coms" id="dn-coms"></ul>
+                </div>
+              </div>
+            </div>
+            <div class="plot"><h4>\(x_i(t)\) · banda: ventana usada para \(W\) · haz clic para mover el tiempo</h4><canvas id="dn-ts" height="170" style="cursor:crosshair"></canvas></div>
+            <div class="timeline">
+              <button class="btn playbtn" id="dn-play" type="button" aria-label="Reproducir o pausar">
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path class="ic-play" d="M4 2.5v11l9-5.5z" fill="currentColor"/><path class="ic-pause" d="M3.5 2.5h3.2v11H3.5zM9.3 2.5h3.2v11H9.3z" fill="currentColor"/></svg>
+              </button>
+              <input type="range" id="dn-time" min="0" max="100" step="1" value="0" aria-label="Tiempo">
+              <output id="dn-tout">t = 0</output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub">
+        <h3 data-reveal>Resultados sin ruido</h3>
+        <div class="stats" data-reveal>
+          <div class="stat"><b data-count="2.35" data-dec="2">2.35</b><span>Acoplamiento crítico \(K_c\): la primera sana en entrar en crisis es la región 7, la de menor \(x_0\) \((3.036)\)</span></div>
+          <div class="stat"><b data-count="2.115" data-dec="3">2.115</b><span>\(K_{\rm sub} = 0.9\,K_c\): el foco hace \(13\) crisis por nodo y ninguna sana entra en crisis</span></div>
+          <div class="stat"><b data-count="2.45" data-dec="2">2.45</b><span>\(K_{\rm sup}\): todas las sanas tienen crisis, de \(2\) a \(4\) cada una</span></div>
+          <div class="stat"><b data-count="2" data-dec="0">2</b><span>Componentes conexas del grafo de consenso, tanto con \(K_{\rm sub}\) como con \(K_{\rm sup}\)</span></div>
+        </div>
+        <div class="cols" style="margin-top:32px">
+          <ol class="findings" data-reveal>
+            <li><span>Con \(K_{\rm sub}\) los cinco métodos encuentran lo mismo: \(\{0,1\}\) y \(\{2,\dots,9\}\), con \(Q = 0.063\) y ARI \(= 1\). Solo la comunidad del foco entra en crisis, el \(11.9\,\%\) del tiempo.</span></li>
+            <li><span>Con \(K_{\rm sup}\) el consenso da \(\{0,1,7\}\) y \(\{2,3,4,5,6,8,9\}\) \((Q = 0.057,\ \text{ARI} = 0.59)\). La región 7, la más excitable de las sanas, se va con el foco. Ahora entran en crisis las dos comunidades: \(7.0\,\%\) y \(3.1\,\%\) del tiempo.</span></li>
+            <li><span>Al subir \(K\) el foco pierde crisis (de \(13\) a \(5\) entre \(K = 2.15\) y \(2.5\)): la mayoría sana también lo frena.</span></li>
+          </ol>
+          <ol class="findings" data-reveal style="counter-reset:f 3">
+            <li><span>Con \(T = 150\,000\) hay una cascada por cada dos crisis del foco. Dentro de cada cascada las sanas entran en orden creciente de \(x_0\): \(7 \to 2 \to 6 \to 8 \to 4 \to 5 \to 9 \to 3\), todas en unas \(450\) unidades de tiempo.</span></li>
+            <li><span>La comunidad del foco no absorbe a las sanas de forma estable. En la mayoría de las ventanas sigue siendo \(\{0,1\}\), y las sanas entran en crisis juntas, como un bloque. Solo en el \(7.5\)–\(15\,\%\) de las ventanas la red queda en una comunidad o el foco suma a las regiones 7 y 2.</span></li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="sub">
+        <h3 data-reveal>Resultados con ruido</h3>
+        <div class="stats" data-reveal>
+          <div class="stat"><b data-count="0" data-dec="0">0</b><span>Crisis sanas en el control \(K = 0\) con ruido (\(20\) realizaciones, \(T = 100\,000\))</span></div>
+          <div class="stat"><b data-count="2.327" data-dec="3">2.327</b><span>\(K_{\rm ruido} = 0.99\,K_c\): el mayor \(K\) de la grilla sin crisis sanas en el caso determinista</span></div>
+          <div class="stat"><b data-count="1.4" data-dec="1">1.4</b><span>Máximo de sanas reclutadas en promedio con ruido en \(K \in [0.90,\ 0.99]\,K_c\). Ningún \(K\) llega a \(4\)</span></div>
+          <div class="stat"><b data-count="1" data-dec="0" data-suffix=" de 20">1 de 20</b><span>Realizaciones con \(K_{\rm ruido}\) en que el ruido disparó una cascada completa</span></div>
+        </div>
+        <div class="cols" style="margin-top:32px">
+          <ol class="findings" data-reveal>
+            <li><span>En una realización larga \((T = 300\,000)\) con \(K_{\rm ruido}\) el foco tiene \(74\) crisis por nodo, la región 7 tiene \(3\) y las demás sanas ninguna. El consenso vuelve a dar \(\{0,1\}\) y \(\{2,\dots,9\}\) en los cinco métodos \((Q = 0.074,\ \text{ARI} = 1)\).</span></li>
+            <li><span>La región 7 solo se une a la comunidad del foco en las ventanas que contienen sus crisis (\(4.4\,\%\) de las ventanas). Su comunidad nunca llega a estar en crisis porque es una sola de ocho.</span></li>
+            <li><span>Con \(K = 0\) los \(z\) de las sanas son ruido independiente y Louvain a veces las junta con el foco por azar (\(15\)–\(45\,\%\)). Con \(K_{\rm ruido}\) las sanas se mueven juntas con el campo medio y forman siempre una comunidad propia (\(0\,\%\)).</span></li>
+          </ol>
+          <div data-reveal>
+            <p class="note"><strong>Conclusión.</strong> La matriz estructural \(A_{ij} = 1\) no distingue regiones, pero la matriz dinámica \(W\) sí: separa el foco de las sanas en dos componentes conexas \((Q \approx 0.06\)–\(0.08)\). Sin ruido la comunidad sana entra en crisis como bloque y en orden de \(x_0\). Con ruido no apareció el contraste que esperaba, con sanas entrando de a una: el reclutamiento es de todo o nada. Casi siempre cede solo la región 7, la de menor \(x_0\), y muy de vez en cuando el ruido dispara una cascada completa, igual a la que se ve sin ruido con \(K_{\rm sup}\).</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub">
+        <p class="kicker" data-reveal>Resultados de las simulaciones</p>
+        <h3 data-reveal>Matrices, comunidades y series</h3>
+        <div class="plates" data-plates="dinamica"></div>
+      </div>
+    </div>
   </div>
 </section>
 

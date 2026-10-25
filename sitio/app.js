@@ -2114,7 +2114,7 @@ function labCL() {
 
 function buildCL(T) {
   const canvas = $('#cl-canvas'), stage = $('#cl-stage3'), tip = $('#cl-tip'), busy = $('#cl-busy'), cm = $('#cl-mat'), ct = $('#cl-ts'), comsEl = $('#cl-coms');
-  const iK = $('#cl-k'), iZ = $('#cl-sz'), iN = $('#cl-n'), iT = $('#cl-time');
+  const iK = $('#cl-k'), iZ = $('#cl-sz'), iN = $('#cl-n'), iF = $('#cl-f'), iT = $('#cl-time');
   let X0 = DN_X0, N = X0.length, REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
   const VIEW = { yaw: -0.6, pitch: 0.38, dist: 5.2 }, STEP = 200;    // paso de 1 000
   const METHODS = [
@@ -2152,13 +2152,15 @@ function buildCL(T) {
   };
   const r0 = 0.085;
   // x0 para N regiones: foco (2.3, 2.4) y sanas U[2.9, 3.5] sobre 2.95; con N = 10 es el vector del estudio
-  const x0For = n => {
-    if (n === DN_X0.length) return DN_X0;
+  const x0For = (n, f) => {
+    if (n === DN_X0.length && f === 2) return DN_X0;
+    const foci = [2.3, 2.4, 2.5, 2.2];
     const r = mulberry32(42);
-    return Array.from({ length: n }, (_, i) => { if (i < 2) return [2.3, 2.4][i]; let v; do v = 2.9 + 0.6 * r(); while (v < 2.95); return v; });
+    return Array.from({ length: n }, (_, i) => { if (i < f) return foci[i]; let v; do v = 2.9 + 0.6 * r(); while (v < 2.95); return v; });
   };
   function setN() {
-    X0 = x0For(+iN.value); N = X0.length; REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
+    iF.max = Math.min(4, +iN.value - 1); if (+iF.value > +iF.max) iF.value = iF.max; upF();
+    X0 = x0For(+iN.value, +iF.value); N = X0.length; REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
     st.cache.clear(); st.curKey = ''; makeObjects();
   }
   let nodes = [], labels = [], bubbles = [], pairs = [], P = [];
@@ -2291,7 +2293,7 @@ function buildCL(T) {
 
   let lastDraw = 0;
   function draw(now = performance.now()) {
-    if (!st.sim) return;
+    if (!st.sim || st.sim.N !== N) return;          // N cambió y la simulación nueva aún no está
     refresh();
     update(now - lastDraw || 16); lastDraw = now;
     const cp = Math.cos(st.pitch), dist = st.dist * st.fit;
@@ -2385,6 +2387,7 @@ function buildCL(T) {
   const upK = bindRange(iK, $('#cl-ko'), 3, () => { pressed('#cl-esc', () => false); rebuild(); });
   const upZ = bindRange(iZ, $('#cl-szo'), 5, () => { pressed('#cl-esc', () => false); st.T = +iZ.value > 0 ? 100000 : 60000; rebuild(); });
   bindRange(iN, $('#cl-no'), 0, () => { setN(); rebuild(); });
+  const upF = bindRange(iF, $('#cl-fo'), 0, () => { setN(); rebuild(); });
   presetButtons($('#cl-met'), METHODS.map(m => ({ v: m.id, label: m.label })), v => { st.method = v; pressed('#cl-met', q => q === v); st.curKey = ''; redraw2d(); });
   presetButtons($('#cl-esc'), SCEN.map(s => ({ v: s.id, label: s.label })), v => {
     const s = SCEN.find(q => q.id === v);

@@ -848,7 +848,11 @@ dz_i &amp;= \frac{1}{\tau_0}\Big[h(x_i) - z_i - \frac{K}{N}\sum_{j} A_{ij}\,(x_j
               <div class="ctl">
                 <label for="cl-n"><span>Regiones \(N\)</span> <output id="cl-no">10</output></label>
                 <input type="range" id="cl-n" min="4" max="20" step="1" value="10">
-                <small>Foco \(x_0 = (2.3,\ 2.4)\) y sanas \(x_0 \sim U[2.9,\ 3.5]\). Con \(N = 10\) es el vector del estudio. La ventana es de \(4\,000\).</small>
+              </div>
+              <div class="ctl">
+                <label for="cl-f"><span>Focos epileptogénicos</span> <output id="cl-fo">2</output></label>
+                <input type="range" id="cl-f" min="1" max="4" step="1" value="2">
+                <small>Focos con \(x_0 \in \{2.3,\ 2.4,\ 2.5,\ 2.2\}\) y sanas \(x_0 \sim U[2.9,\ 3.5]\). Con \(N = 10\) y \(2\) focos es el vector del estudio. La ventana es de \(4\,000\).</small>
               </div>
               <div class="ctl">
                 <div class="lbl"><span>Momento de la cascada</span></div>

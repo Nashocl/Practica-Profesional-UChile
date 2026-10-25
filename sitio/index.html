@@ -846,8 +846,9 @@ dz_i &amp;= \frac{1}{\tau_0}\Big[h(x_i) - z_i - \frac{K}{N}\sum_{j} A_{ij}\,(x_j
                 <small>\(\sigma_x = 0.02\) cuando hay ruido en \(z\).</small>
               </div>
               <div class="ctl">
-                <label for="cl-w"><span>Ventana</span> <output id="cl-wo">4000</output></label>
-                <input type="range" id="cl-w" min="2000" max="30000" step="1000" value="4000">
+                <label for="cl-n"><span>Regiones \(N\)</span> <output id="cl-no">10</output></label>
+                <input type="range" id="cl-n" min="4" max="20" step="1" value="10">
+                <small>Foco \(x_0 = (2.3,\ 2.4)\) y sanas \(x_0 \sim U[2.9,\ 3.5]\). Con \(N = 10\) es el vector del estudio. La ventana es de \(4\,000\).</small>
               </div>
               <div class="ctl">
                 <div class="lbl"><span>Momento de la cascada</span></div>

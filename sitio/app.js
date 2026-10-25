@@ -2114,10 +2114,11 @@ function labCL() {
 
 function buildCL(T) {
   const canvas = $('#cl-canvas'), stage = $('#cl-stage3'), tip = $('#cl-tip'), busy = $('#cl-busy'), cm = $('#cl-mat'), ct = $('#cl-ts'), comsEl = $('#cl-coms');
-  const iK = $('#cl-k'), iZ = $('#cl-sz'), iW = $('#cl-w'), iT = $('#cl-time');
-  const N = DN_X0.length, REF = Int32Array.from(DN_X0, v => v < X0C ? 0 : 1), VIEW = { yaw: -0.6, pitch: 0.38, dist: 5.2 }, STEP = 200;    // paso de 1 000
+  const iK = $('#cl-k'), iZ = $('#cl-sz'), iN = $('#cl-n'), iT = $('#cl-time');
+  let X0 = DN_X0, N = X0.length, REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
+  const VIEW = { yaw: -0.6, pitch: 0.38, dist: 5.2 }, STEP = 200;    // paso de 1 000
   const METHODS = [
-    { id: 'consenso', label: 'Consenso', f: W => consensusDN(W, N, 50).lab },
+    { id: 'consenso', label: 'Consenso', f: W => consensusDN(W, N, N > 12 ? 20 : 50).lab },
     { id: 'louvain', label: 'Louvain', f: W => louvainLite(W, N, mulberry32(42)) },
     { id: 'cnm', label: 'Greedy (CNM)', f: W => cnmDN(W, N) },
     { id: 'lpa', label: 'Propagación de etiquetas', f: W => lpaDN(W, N, mulberry32(42)) },
@@ -2150,15 +2151,33 @@ function buildCL(T) {
     return s;
   };
   const r0 = 0.085;
-  const nodes = DN_X0.map((_, i) => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.45 })); m.userData.i = i; m.scale.setScalar(r0); scene.add(m); return m; });
-  const labels = DN_X0.map((v, i) => { const s = numSprite(i, v < X0C ? '#8f3a1f' : '#2a2018'); scene.add(s); return s; });
-  const bubbles = DN_X0.map(() => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: COLS[0], transparent: true, opacity: 0.13, depthWrite: false, roughness: 0.9 })); scene.add(m); return m; });
-  const pairs = [];
-  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) { const mat = new T.MeshBasicMaterial({ color: GREY.clone(), transparent: true, depthWrite: false }), m = new T.Mesh(cylGeo, mat); scene.add(m); pairs.push({ i, j, m, mat }); }
-  const P = DN_X0.map((_, i) => new T.Vector3(Math.cos(i), Math.sin(i * 1.7) * 0.3, Math.sin(i)).multiplyScalar(0.6)), UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), v3 = new T.Vector3(), tgt = new T.Vector3();
+  // x0 para N regiones: foco (2.3, 2.4) y sanas U[2.9, 3.5] sobre 2.95; con N = 10 es el vector del estudio
+  const x0For = n => {
+    if (n === DN_X0.length) return DN_X0;
+    const r = mulberry32(42);
+    return Array.from({ length: n }, (_, i) => { if (i < 2) return [2.3, 2.4][i]; let v; do v = 2.9 + 0.6 * r(); while (v < 2.95); return v; });
+  };
+  function setN() {
+    X0 = x0For(+iN.value); N = X0.length; REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
+    st.cache.clear(); st.curKey = ''; makeObjects();
+  }
+  let nodes = [], labels = [], bubbles = [], pairs = [], P = [];
+  const UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), v3 = new T.Vector3(), tgt = new T.Vector3();
+  // objetos de la escena para el N actual
+  function makeObjects() {
+    for (const o of [...nodes, ...bubbles, ...pairs.map(q => q.m)]) { scene.remove(o); o.material.dispose(); }
+    for (const o of labels) { scene.remove(o); o.material.map.dispose(); o.material.dispose(); }
+    nodes = X0.map((_, i) => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.45 })); m.userData.i = i; m.scale.setScalar(r0); scene.add(m); return m; });
+    labels = X0.map((v, i) => { const s = numSprite(i, v < X0C ? '#8f3a1f' : '#2a2018'); scene.add(s); return s; });
+    bubbles = X0.map(() => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: COLS[0], transparent: true, opacity: 0.13, depthWrite: false, roughness: 0.9 })); scene.add(m); return m; });
+    pairs = [];
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) { const mat = new T.MeshBasicMaterial({ color: GREY.clone(), transparent: true, depthWrite: false }), m = new T.Mesh(cylGeo, mat); scene.add(m); pairs.push({ i, j, m, mat }); }
+    P = X0.map((_, i) => new T.Vector3(Math.cos(i), Math.sin(i * 1.7) * 0.3, Math.sin(i)).multiplyScalar(0.6));
+    st.targets = null; st.hover = -1;
+  }
   const colOf = (part, c) => part.coms[c].includes(0) ? 0 : 1 + (c - (part.lab[0] < c ? 1 : 0));
 
-  const nv = () => Math.min(st.sim.n, Math.round(+iW.value / 5));
+  const nv = () => Math.min(st.sim.n, 800);          // ventana fija de 4 000
   const startOf = fr => { const n = nv(); return clamp(Math.round((fr - n / 2) / STEP) * STEP, 0, st.sim.n - n); };
   function analyse(a) {
     const key = st.method + ':' + a + ':' + nv();
@@ -2176,7 +2195,7 @@ function buildCL(T) {
     if (key === st.curKey) return;
     st.curKey = key; st.cur = cur;
     st.targets = spring3D(cur.W, N, st.targets || P.map(p => [p.x / SC, p.y / SC, p.z / SC]), st.targets ? 70 : 300);
-    const sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), n = nv();
+    const sanas = X0.map((v, i) => i).filter(i => X0[i] >= X0C), n = nv();
     let simul = 0, recS = 0;
     for (let q = a; q < a + n; q++) { let s = 0; for (let i = 0; i < N; i++) s += st.sim.s[i][q]; simul = Math.max(simul, s); }
     for (const i of sanas) { for (let q = a; q < a + n; q++) if (st.sim.s[i][q]) { recS++; break; } }
@@ -2189,7 +2208,7 @@ function buildCL(T) {
     tex($('#cl-read'));
     comsEl.innerHTML = cur.coms.map((c, q) =>
       `<li class="${cur.crisis[q] > 0 ? 'crisis' : ''}"><span class="sw" style="background:${DN_COL[colOf(cur, q) % DN_COL.length]}"></span>` +
-      `<span class="mem">${c.map(i => `<b class="${DN_X0[i] < X0C ? 'epi' : ''}">${i}</b>`).join('')}</span>` +
+      `<span class="mem">${c.map(i => `<b class="${X0[i] < X0C ? 'epi' : ''}">${i}</b>`).join('')}</span>` +
       `<span class="st">${(100 * cur.crisis[q]).toFixed(1)} % en crisis</span></li>`).join('');
     if (M && !reduced) M.animate(comsEl, { opacity: [0.4, 1] }, { duration: 0.25 });
   }
@@ -2234,10 +2253,10 @@ function buildCL(T) {
   function drawMat() {
     const cur = st.cur, { g, w, h } = fit(cm);
     g.clearRect(0, 0, w, h);
-    const ord = cur.coms.flatMap(c => [...c].sort((a, b) => DN_X0[a] - DN_X0[b])), size = Math.min(w - 40, h - 22), cell = size / N, ox = (w - size) / 2 + 10, oy = 16;
+    const ord = cur.coms.flatMap(c => [...c].sort((a, b) => X0[a] - X0[b])), size = Math.min(w - 40, h - 22), cell = size / N, ox = (w - size) / 2 + 10, oy = 16;
     g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center';
     ord.forEach((i, r) => {
-      g.fillStyle = DN_X0[i] < X0C ? '#8f3a1f' : C.muted;
+      g.fillStyle = X0[i] < X0C ? '#8f3a1f' : C.muted;
       g.fillText(i, ox + (r + .5) * cell, 11); g.fillText(i, ox - 14, oy + (r + .5) * cell + 4);
       ord.forEach((j, c) => {
         const u = i === j ? 0 : cur.W[i * N + j] / (cur.whi || 1);
@@ -2261,7 +2280,7 @@ function buildCL(T) {
     g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(-0.5)); g.lineTo(w - 10, Y(-0.5)); g.stroke(); g.setLineDash([]);
     const stepK = Math.max(1, Math.floor(s.n / (w * 1.5)));
     for (let i = N - 1; i >= 0; i--) {
-      const epi = DN_X0[i] < X0C, on = st.hover < 0 || st.hover === i;
+      const epi = X0[i] < X0C, on = st.hover < 0 || st.hover === i;
       g.beginPath();
       for (let k = 0; k < s.n; k += stepK) { const px = X(s.t[k]), py = Y(s.x[i][k]); k ? g.lineTo(px, py) : g.moveTo(px, py); }
       stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .55) : .1), epi || st.hover === i ? 1.6 : 1);
@@ -2294,7 +2313,7 @@ function buildCL(T) {
     if (key !== st.tipKey) {
       st.tipKey = key;
       const nb = [...Array(N).keys()].filter(j => j !== i).sort((a, b) => cur.W[i * N + b] - cur.W[i * N + a])[0];
-      tip.innerHTML = `nodo ${i} · ${DN_X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${DN_X0[i].toFixed(3)}\)`}<br>` +
+      tip.innerHTML = `nodo ${i} · ${X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${X0[i].toFixed(3)}\)`}<br>` +
         `comunidad ${cur.lab[i] + 1} de ${cur.coms.length}<br>mayor ${R`\(W_{${i}j}\)`}: con ${nb} (${cur.W[i * N + nb].toFixed(2)})`;
       tex(tip);
     }
@@ -2306,7 +2325,7 @@ function buildCL(T) {
   // ---- simulación y momentos de la cascada
   function simulateNow() {
     const K = +iK.value, sz = +iZ.value;
-    st.sim = simDN({ K, sx: sz > 0 ? 0.02 : 0, sz, T: st.T, seed: st.seed });
+    st.sim = simDN({ K, sx: sz > 0 ? 0.02 : 0, sz, T: st.T, seed: st.seed, x0: X0 });
     st.cache.clear(); st.curKey = '';
     if (st.fr > st.sim.n - 1) st.fr = 0;
     iT.max = st.sim.n - 1;
@@ -2315,7 +2334,7 @@ function buildCL(T) {
   }
   // antes: última ventana sin crisis sanas previa a la de más regiones en crisis a la vez; después: la primera tranquila siguiente
   function stages() {
-    const s = st.sim, n = nv(), sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), wins = [];
+    const s = st.sim, n = nv(), sanas = X0.map((v, i) => i).filter(i => X0[i] >= X0C), wins = [];
     for (let a = 0; a + n <= s.n; a += STEP) {
       let simul = 0, rec = 0;
       for (let q = a; q < a + n; q++) { let t = 0; for (let i = 0; i < N; i++) t += s.s[i][q]; simul = Math.max(simul, t); }
@@ -2365,7 +2384,7 @@ function buildCL(T) {
   const pressed = (host, test) => $$(`${host} .btn`).forEach(b => b.setAttribute('aria-pressed', String(test(b._v))));
   const upK = bindRange(iK, $('#cl-ko'), 3, () => { pressed('#cl-esc', () => false); rebuild(); });
   const upZ = bindRange(iZ, $('#cl-szo'), 5, () => { pressed('#cl-esc', () => false); st.T = +iZ.value > 0 ? 100000 : 60000; rebuild(); });
-  bindRange(iW, $('#cl-wo'), 0, () => { st.cache.clear(); stageBtns(); redraw2d(); });
+  bindRange(iN, $('#cl-no'), 0, () => { setN(); rebuild(); });
   presetButtons($('#cl-met'), METHODS.map(m => ({ v: m.id, label: m.label })), v => { st.method = v; pressed('#cl-met', q => q === v); st.curKey = ''; redraw2d(); });
   presetButtons($('#cl-esc'), SCEN.map(s => ({ v: s.id, label: s.label })), v => {
     const s = SCEN.find(q => q.id === v);
@@ -2408,6 +2427,7 @@ function buildCL(T) {
     if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.1;
     draw(now);
   };
+  makeObjects();
   watchVisible($('#labcl'), v => { st.vis = v; });
   setPlay(st.playing);
   $$('#cl-esc .btn')[1].click();

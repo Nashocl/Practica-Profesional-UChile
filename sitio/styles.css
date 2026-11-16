@@ -359,3 +359,11 @@ h2 .katex, h3 .katex, .stat b .katex, .readout dd .katex { font-size: 1em; }
 .dn-coms .mem b.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .dn-coms .st { font-size: 13px; color: var(--muted); white-space: nowrap; }
 .dn-coms li.crisis .st { color: var(--accent-deep); font-weight: 700; }
+
+/* ---- laboratorio del umbral θ ---- */
+.th-table { width: 100%; border-collapse: collapse; font-family: var(--font-tex); font-size: 14.5px; color: var(--ink-soft); }
+.th-table th, .th-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.th-table thead th { font-weight: 400; color: var(--muted); font-size: 13px; }
+.th-table tbody th { text-align: left; color: var(--ink); }
+.th-ari { margin: 10px 0 0; font-size: 14.5px; color: var(--muted); }
+.plot:has(.th-table) { overflow-x: auto; }

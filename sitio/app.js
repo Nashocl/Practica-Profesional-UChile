@@ -1590,32 +1590,17 @@ function consensusDN(W, N, runs = 20) {
 }
 
 // W en ventanas deslizantes, comunidades de consenso y disposición en el plano que sigue a la anterior
-function windowsDN(sim, win, step = 2500) {
+function windowsDN(sim, win, step = 2500, mode = 'W', th = 0.5) {
   const N = sim.N, nv = Math.min(sim.n, Math.round(win / 5)), ns = Math.max(1, Math.round(step / 5)), out = [];
   let pos = Array.from({ length: N }, (_, i) => [Math.cos(i / N * 6.2832), Math.sin(i / N * 6.2832)]);
   for (let a = 0; a + nv <= sim.n; a += ns) {
-    const mu = new Float64Array(N), sd = new Float64Array(N), W = new Float32Array(N * N);
-    for (let i = 0; i < N; i++) {
-      const z = sim.z[i];
-      let m = 0, v = 0;
-      for (let q = a; q < a + nv; q++) m += z[q];
-      m /= nv;
-      for (let q = a; q < a + nv; q++) v += (z[q] - m) ** 2;
-      mu[i] = m; sd[i] = Math.sqrt(v);
-    }
+    const C = corrC(sim, a, nv), Wp = clipW(C), W = adjOf(C, mode, th);
     let wlo = Infinity, whi = 0;
-    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
-      let c = 0;
-      const zi = sim.z[i], zj = sim.z[j];
-      for (let q = a; q < a + nv; q++) c += (zi[q] - mu[i]) * (zj[q] - mu[j]);
-      const w = sd[i] > 1e-12 && sd[j] > 1e-12 ? Math.max(0, c / (sd[i] * sd[j])) : 0;
-      W[i * N + j] = W[j * N + i] = w;
-      wlo = Math.min(wlo, w); whi = Math.max(whi, w);
-    }
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) { wlo = Math.min(wlo, Wp[i * N + j]); whi = Math.max(whi, W[i * N + j]); }
     const { lab, coms } = consensusDN(W, N);
     const frac = coms.map(c => { let n = 0; for (let q = a; q < a + nv; q++) { let m = 0; for (const i of c) m += sim.s[i][q]; if (m / c.length > 0.5) n++; } return n / nv; });
-    pos = layoutDN(W, lab, N, pos, wlo, whi, out.length ? 60 : 300);
-    out.push({ a, b: a + nv, c: a + nv / 2, W, whi, lab, coms, frac, Q: modQ(W, lab, N), pos });
+    pos = layoutDN(Wp, lab, N, pos, wlo, Math.max(...Wp), out.length ? 60 : 300);      // la disposición siempre sigue a W
+    out.push({ a, b: a + nv, c: a + nv / 2, W, whi, lab, coms, frac, Q: modQ(W, lab, N), pos, mode });
   }
   return out;
 }
@@ -1649,11 +1634,11 @@ function labDN() {
 
 function buildDN(T) {
   const canvas = $('#dn-canvas'), stage = $('#dn-stage'), tip = $('#dn-tip'), busy = $('#dn-busy'), cm = $('#dn-mat'), ct = $('#dn-ts'), comsEl = $('#dn-coms');
-  const iK = $('#dn-k'), iX = $('#dn-sx'), iZ = $('#dn-sz'), iW = $('#dn-w'), iT = $('#dn-time');
+  const iK = $('#dn-k'), iX = $('#dn-sx'), iZ = $('#dn-sz'), iW = $('#dn-w'), iT = $('#dn-time'), iTh = $('#dn-th');
   const axLab = $$('#dn-labels > span');
   const S = { x: 1.35, y: 0.95, z: 1.05 }, VIEW = { yaw: -0.7, pitch: 0.42, dist: 5.4 }, N = DN_X0.length;
   const ORD = DN_X0.map((v, i) => i).sort((a, b) => DN_X0[a] - DN_X0[b]);
-  const st = { sim: null, wins: [], fr: 0, playing: !reduced, spin: !reduced, ...VIEW, hover: -1, vis: false, T: 60000, seed: 7, drag: false, phase: 0, fit: 1, tshown: -1, comKey: '', tipKey: '' };
+  const st = { sim: null, wins: [], fr: 0, playing: !reduced, spin: !reduced, ...VIEW, hover: -1, vis: false, T: 60000, seed: 7, drag: false, phase: 0, fit: 1, tshown: -1, comKey: '', tipKey: '', mode: 'A' };
 
   const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -1738,7 +1723,7 @@ function buildDN(T) {
       `<div><dt>Modularidad ${R`\(Q\)`}</dt><dd id="dn-q">—</dd></div>`;
     tex($('#dn-read'));
   }
-  function windows() { st.wins = windowsDN(st.sim, +iW.value); st.comKey = ''; }
+  function windows() { st.wins = windowsDN(st.sim, +iW.value, 2500, st.mode, +iTh.value); st.comKey = ''; }
 
   function update(k) {
     const s = st.sim, { a, b, u, w } = winAt(k);
@@ -1771,7 +1756,7 @@ function buildDN(T) {
     const ws = pairs.map(p => w.W[p.i * N + p.j]).sort((x, y) => x - y), pos = 0.5 * (ws.length - 1), lo = Math.floor(pos);
     const cut = ws[lo] + ((ws[Math.min(lo + 1, ws.length - 1)] - ws[lo]) * (pos - lo));
     for (const p of pairs) {
-      const val = w.W[p.i * N + p.j], show = val > 0 && val >= cut, hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
+      const val = w.W[p.i * N + p.j], show = val > 0 && (w.mode === 'A' || val >= cut), hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
       p.m.visible = show;
       if (!show) continue;
       d.subVectors(P[p.j], P[p.i]);
@@ -1832,7 +1817,7 @@ function buildDN(T) {
     }).join('');
     const nc = $('#dn-nc'), qq = $('#dn-q');
     if (nc) nc.textContent = w.coms.length;
-    if (qq) qq.textContent = w.Q.toFixed(3);
+    if (qq) qq.textContent = fmtQ(w.Q);
   }
 
   function draw() {
@@ -1906,6 +1891,11 @@ function buildDN(T) {
   const upX = bindRange(iX, $('#dn-sxo'), 3, () => { syncMode(); rebuild(); });
   const upZ = bindRange(iZ, $('#dn-szo'), 5, () => { syncMode(); rebuild(); });
   bindRange(iW, $('#dn-wo'), 0, () => later(windows));
+  bindRange(iTh, $('#dn-tho'), 2, () => later(windows));
+  $$('#dn-case button').forEach(b => b.onclick = () => {
+    $$('#dn-case button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st.mode = b.dataset.v; iTh.disabled = st.mode !== 'A'; later(windows);
+  });
   presetButtons($('#dn-ks'), [['sub', R`K_{\rm sub}`], ['ruido', R`K_{\rm ruido}`], ['c', R`K_c`], ['sup', R`K_{\rm sup}`]].map(([k, l]) => ({ v: DN_K[k], label: R`\(${l}\)` })),
     v => { iK.value = v; upK(); syncKs(); rebuild(); });
   tex($('#dn-ks'));
@@ -2067,8 +2057,9 @@ function ariDN(a, b, N) {              // índice de Rand ajustado
   const exp = sa * sb / c2(N), mx = (sa + sb) / 2;
   return mx === exp ? 1 : (sij - exp) / (mx - exp);
 }
-function corrW(sim, a, nv) {
-  const N = sim.N, mu = new Float64Array(N), sd = new Float64Array(N), W = new Float32Array(N * N);
+// C_ij = corr(z_i, z_j) con signo, diagonal 0, sobre las muestras [a, a + nv)
+function corrC(sim, a, nv) {
+  const N = sim.N, mu = new Float64Array(N), sd = new Float64Array(N), C = new Float32Array(N * N);
   for (let i = 0; i < N; i++) {
     const z = sim.z[i];
     let m = 0, v = 0;
@@ -2081,18 +2072,58 @@ function corrW(sim, a, nv) {
     let c = 0;
     const zi = sim.z[i], zj = sim.z[j];
     for (let q = a; q < a + nv; q++) c += (zi[q] - mu[i]) * (zj[q] - mu[j]);
-    W[i * N + j] = W[j * N + i] = sd[i] > 1e-12 && sd[j] > 1e-12 ? Math.max(0, c / (sd[i] * sd[j])) : 0;
+    C[i * N + j] = C[j * N + i] = sd[i] > 1e-12 && sd[j] > 1e-12 ? c / (sd[i] * sd[j]) : 0;
   }
-  return W;
+  return C;
 }
+const fmtQ = v => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3);      // evita mostrar −0.000
+const clipW = C => C.map(v => Math.max(0, v));
+const corrW = (sim, a, nv) => clipW(corrC(sim, a, nv));
+// matriz sobre la que se detectan comunidades: A^θ entera (caso A) o W ponderada (caso W)
+const adjOf = (C, mode, th) => mode === 'A' ? C.map(v => v > th ? 1 : 0) : clipW(C);
+// estadísticos de la Parte III: cota Q_max, contraste de correlación y componentes conexas
+function qmaxDN(M, lab, N) {
+  const k = new Float64Array(N);
+  let tot = 0;
+  for (let i = 0; i < N; i++) { for (let j = 0; j < N; j++) k[i] += M[i * N + j]; tot += k[i]; }
+  if (!tot) return 0;
+  const by = new Map();
+  for (let i = 0; i < N; i++) by.set(lab[i], (by.get(lab[i]) || 0) + k[i]);
+  return 1 - [...by.values()].reduce((s, v) => s + (v / tot) ** 2, 0);
+}
+function contrasteDN(C, lab, N) {
+  let din = 0, nin = 0, dout = 0, nout = 0;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    if (lab[i] === lab[j]) { din += C[i * N + j]; nin++; } else { dout += C[i * N + j]; nout++; }
+  }
+  return nin && nout ? din / nin - dout / nout : 0;
+}
+function componentsDN(M, N) {
+  const seen = new Uint8Array(N);
+  let n = 0;
+  for (let i = 0; i < N; i++) {
+    if (seen[i]) continue;
+    n++; seen[i] = 1;
+    const stack = [i];
+    while (stack.length) { const a = stack.pop(); for (let b = 0; b < N; b++) if (!seen[b] && M[a * N + b] > 0) { seen[b] = 1; stack.push(b); } }
+  }
+  return n;
+}
+const edgesDN = (M, N) => { let m = 0; for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) if (M[i * N + j] > 0) m++; return m; };
+// los mismos estadísticos para una partición dada
+function statsDN(C, M, lab, N, ref) {
+  const Q = modQ(M, lab, N), qm = qmaxDN(M, lab, N);
+  return { Q, qmax: qm, qr: qm > 1e-9 ? Q / qm : 0, contraste: contrasteDN(C, lab, N), comp: componentsDN(M, N), m: edgesDN(M, N), ari: ref ? ariDN(lab, ref, N) : NaN };
+}
+
 // disposición de resortes en 3D según W (análoga a nx.spring_layout con peso), con arranque en la anterior
-function spring3D(W, N, start, iters) {
+function spring3D(W, N, start, iters, att = 1.6) {
   const P = start.map(p => p.slice()), k = 0.55;
   for (let it = 0, temp = iters > 100 ? 0.2 : 0.07; it < iters; it++, temp *= 0.985) {
     const D = P.map(() => [0, 0, 0]);
     for (let a = 0; a < N; a++) for (let b = a + 1; b < N; b++) {
       const dv = [0, 1, 2].map(q => P[a][q] - P[b][q]), d = Math.hypot(...dv) || 1e-3;
-      const f = k * k / d - 1.6 * W[a * N + b] ** 2 * d * d / k;
+      const f = k * k / d - att * W[a * N + b] ** 2 * d * d / k;
       for (let q = 0; q < 3; q++) { D[a][q] += dv[q] / d * f; D[b][q] -= dv[q] / d * f; }
     }
     for (let a = 0; a < N; a++) {
@@ -2113,7 +2144,7 @@ function labCL() {
 
 function buildCL(T) {
   const canvas = $('#cl-canvas'), stage = $('#cl-stage3'), tip = $('#cl-tip'), busy = $('#cl-busy'), cm = $('#cl-mat'), ct = $('#cl-ts'), comsEl = $('#cl-coms');
-  const iK = $('#cl-k'), iZ = $('#cl-sz'), iN = $('#cl-n'), iF = $('#cl-f'), iT = $('#cl-time');
+  const iK = $('#cl-k'), iZ = $('#cl-sz'), iN = $('#cl-n'), iF = $('#cl-f'), iT = $('#cl-time'), iTh = $('#cl-th');
   let X0 = DN_X0, N = X0.length, REF = Int32Array.from(X0, v => v < X0C ? 0 : 1);
   const VIEW = { yaw: -0.6, pitch: 0.38, dist: 5.2 }, STEP = 200;    // paso de 1 000
   const METHODS = [
@@ -2129,7 +2160,7 @@ function buildCL(T) {
     { id: 'ruido', label: R`\(K_{\rm ruido}\) con ruido`, K: DN_K.ruido, sz: 7.5e-4, T: 100000, seed: CL_SEED, note: 'Una realización con ruido en que el ruido dispara una cascada completa.' },
   ];
   const st = { sim: null, method: 'consenso', fr: 0, playing: !reduced, spin: !reduced, ...VIEW, hover: -1, vis: false, T: 60000, seed: 3, drag: false, phase: 0, fit: 1,
-    cache: new Map(), cur: null, curKey: '', targets: null, tshown: -1, tipKey: '' };
+    cache: new Map(), cur: null, curKey: '', targets: null, tshown: -1, tipKey: '', mode: 'A' };
 
   const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -2180,29 +2211,34 @@ function buildCL(T) {
 
   const nv = () => Math.min(st.sim.n, 800);          // ventana fija de 4 000
   const startOf = fr => { const n = nv(); return clamp(Math.round((fr - n / 2) / STEP) * STEP, 0, st.sim.n - n); };
+  const keyOf = a => [st.method, a, nv(), st.mode, st.mode === 'A' ? iTh.value : ''].join(':');
   function analyse(a) {
-    const key = st.method + ':' + a + ':' + nv();
+    const key = keyOf(a);
     if (st.cache.has(key)) return st.cache.get(key);
-    const W = corrW(st.sim, a, nv()), m = METHODS.find(q => q.id === st.method), part = partition(m.f(W), N);
+    const Cm = corrC(st.sim, a, nv()), Wp = clipW(Cm), W = adjOf(Cm, st.mode, +iTh.value);
+    const m = METHODS.find(q => q.id === st.method), part = partition(m.f(W), N);
     let whi = 0;
     for (let q = 0; q < N * N; q++) whi = Math.max(whi, W[q]);
     const n = nv(), crisis = part.coms.map(c => { let k = 0; for (let q = a; q < a + n; q++) { let s = 0; for (const i of c) s += st.sim.s[i][q]; if (s / c.length > 0.5) k++; } return k / n; });
-    const res = { a, W, whi, ...part, Q: modQ(W, part.lab, N), ari: ariDN(part.lab, REF, N), crisis };
+    const res = { a, W, Wp, C: Cm, whi, ...part, ...statsDN(Cm, W, part.lab, N, REF), crisis };
     st.cache.set(key, res);
     return res;
   }
   function refresh() {
-    const a = startOf(st.fr), cur = analyse(a), key = st.method + ':' + a + ':' + nv();
+    const a = startOf(st.fr), cur = analyse(a), key = keyOf(a);
     if (key === st.curKey) return;
     st.curKey = key; st.cur = cur;
-    st.targets = spring3D(cur.W, N, st.targets || P.map(p => [p.x / SC, p.y / SC, p.z / SC]), st.targets ? 70 : 300);
+    st.targets = spring3D(cur.Wp, N, st.targets || P.map(p => [p.x / SC, p.y / SC, p.z / SC]), st.targets ? 70 : 300);
     const sanas = X0.map((v, i) => i).filter(i => X0[i] >= X0C), n = nv();
     let simul = 0, recS = 0;
     for (let q = a; q < a + n; q++) { let s = 0; for (let i = 0; i < N; i++) s += st.sim.s[i][q]; simul = Math.max(simul, s); }
     for (const i of sanas) { for (let q = a; q < a + n; q++) if (st.sim.s[i][q]) { recS++; break; } }
     $('#cl-read').innerHTML =
       `<div><dt>Comunidades</dt><dd>${cur.coms.length}</dd></div>` +
-      `<div><dt>Modularidad ${R`\(Q\)`}</dt><dd>${cur.Q.toFixed(3)}</dd></div>` +
+      `<div><dt>Modularidad ${R`\(Q\)`}</dt><dd>${cufmtQ(r.Q)}</dd></div>` +
+      `<div><dt>${R`\(Q / Q_{\max}\)`}</dt><dd>${cur.qr.toFixed(2)}</dd></div>` +
+      `<div><dt>Contraste</dt><dd>${cur.contraste.toFixed(2)}</dd></div>` +
+      `<div><dt>Aristas · componentes</dt><dd>${cur.m} · ${cur.comp}</dd></div>` +
       `<div><dt>ARI vs {foco, sanas}</dt><dd>${cur.ari.toFixed(2)}</dd></div>` +
       `<div><dt>En crisis a la vez (máx.)</dt><dd class="${simul > 2 ? 'epi' : ''}">${simul}</dd></div>` +
       `<div><dt>Sanas con crisis en la ventana</dt><dd class="${recS ? 'epi' : 'sano'}">${recS} / ${sanas.length}</dd></div>`;
@@ -2313,9 +2349,9 @@ function buildCL(T) {
     const i = st.hover, cur = st.cur, key = i + ':' + st.curKey;
     if (key !== st.tipKey) {
       st.tipKey = key;
-      const nb = [...Array(N).keys()].filter(j => j !== i).sort((a, b) => cur.W[i * N + b] - cur.W[i * N + a])[0];
+      const nb = [...Array(N).keys()].filter(j => j !== i).sort((a, b) => cur.C[i * N + b] - cur.C[i * N + a])[0];
       tip.innerHTML = `nodo ${i} · ${X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${X0[i].toFixed(3)}\)`}<br>` +
-        `comunidad ${cur.lab[i] + 1} de ${cur.coms.length}<br>mayor ${R`\(W_{${i}j}\)`}: con ${nb} (${cur.W[i * N + nb].toFixed(2)})`;
+        `comunidad ${cur.lab[i] + 1} de ${cur.coms.length}<br>mayor ${R`\(C_{${i}j}\)`}: con ${nb} (${cur.C[i * N + nb].toFixed(2)})`;
       tex(tip);
     }
     v3.copy(P[i]).project(camera);
@@ -2387,6 +2423,11 @@ function buildCL(T) {
   const upZ = bindRange(iZ, $('#cl-szo'), 5, () => { pressed('#cl-esc', () => false); st.T = +iZ.value > 0 ? 100000 : 60000; rebuild(); });
   bindRange(iN, $('#cl-no'), 0, () => { setN(); rebuild(); });
   const upF = bindRange(iF, $('#cl-fo'), 0, () => { setN(); rebuild(); });
+  bindRange(iTh, $('#cl-tho'), 2, () => { st.curKey = ''; redraw2d(); });
+  $$('#cl-case button').forEach(b => b.onclick = () => {
+    $$('#cl-case button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st.mode = b.dataset.v; iTh.disabled = st.mode !== 'A'; st.curKey = ''; redraw2d();
+  });
   presetButtons($('#cl-met'), METHODS.map(m => ({ v: m.id, label: m.label })), v => { st.method = v; pressed('#cl-met', q => q === v); st.curKey = ''; redraw2d(); });
   presetButtons($('#cl-esc'), SCEN.map(s => ({ v: s.id, label: s.label })), v => {
     const s = SCEN.find(q => q.id === v);
@@ -2439,9 +2480,368 @@ function buildCL(T) {
   return size;
 }
 
+/* ================= umbral θ: A^θ contra W (Three.js) ================= */
+const TH_GRID = Array.from({ length: 20 }, (_, q) => +(q * 0.05).toFixed(2));
+function labTH() {
+  let onResize = () => {};
+  loadThree().then(T => { onResize = buildTH(T); }).catch(() => { $('#labth').hidden = true; });
+  return () => onResize();
+}
+
+function buildTH(T) {
+  const canvas = $('#th-canvas'), stage = $('#th-stage'), tip = $('#th-tip'), busy = $('#th-busy'), cc = $('#th-corr'), cb = $('#th-sweep'), comsEl = $('#th-coms'), ct = $('#th-ts'), iT = $('#th-time');
+  const iTh = $('#th-th'), N = DN_X0.length, REF = Int32Array.from(DN_X0, v => v < X0C ? 0 : 1), VIEW = { yaw: -0.6, pitch: 0.4, dist: 4.5 };
+  const iK = $('#th-k'), iX = $('#th-sx'), iZ = $('#th-sz');
+  const SCEN = [
+    { id: 'sub', label: R`\(K_{\rm sub}\)`, K: DN_K.sub, sx: 0, sz: 0, seed: 7 },
+    { id: 'c', label: R`\(K_c\)`, K: DN_K.c, sx: 0, sz: 0, seed: 7 },
+    { id: 'sup', label: R`\(K_{\rm sup}\)`, K: DN_K.sup, sx: 0, sz: 0, seed: 7 },
+    { id: 'ruido', label: R`\(K_{\rm ruido}\) con ruido`, K: DN_K.ruido, sx: 0.02, sz: 7.5e-4, seed: CL_SEED },
+  ];
+  const st = { scen: 'sup', seed: 7, C: null, Wp: null, sweep: [], wPart: null, cur: null, ...VIEW, hover: -1, vis: false, drag: false, phase: 0, fit: 1, spin: !reduced, showW: false, tipKey: '',
+    sim: null, fr: 0, playing: !reduced, full: false, cache: new Map(), curKey: '', targets: null, tshown: -1 };
+
+  const renderer = new T.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new T.Scene(), camera = new T.PerspectiveCamera(34, 1, 0.1, 60);
+  scene.add(new T.HemisphereLight(0xfff6ec, 0xa08468, 1.6));
+  const sun = new T.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(2, 4, 3);
+  scene.add(sun);
+  scene.add(new T.AmbientLight(0xfff3e6, 0.9));
+  const SC = 1.25, COLS = DN_COL.map(c => new T.Color(c)), GREY = new T.Color('#cbbfae');
+  const sphereGeo = new T.SphereGeometry(1, 28, 18), cylGeo = new T.CylinderGeometry(1, 1, 1, 8, 1, true), r0 = 0.085;
+  const numSprite = (n, color) => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    g.font = '42px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color;
+    g.fillText(n, 32, 34);
+    const s = new T.Sprite(new T.SpriteMaterial({ map: new T.CanvasTexture(c), transparent: true, depthWrite: false }));
+    s.scale.setScalar(0.21);
+    return s;
+  };
+  const ringTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.strokeStyle = '#fff'; g.lineWidth = 10; g.beginPath(); g.arc(64, 64, 54, 0, 6.2832); g.stroke();
+    return new T.CanvasTexture(c);
+  })();
+  const ring = (color, opacity) => new T.Sprite(new T.SpriteMaterial({ map: ringTex, color, transparent: true, opacity, depthWrite: false }));
+  const CREAMc = new T.Color('#fffdf9'), col = new T.Color();
+  const nodes = DN_X0.map((_, i) => { const m = new T.Mesh(sphereGeo, new T.MeshStandardMaterial({ color: CREAMc.clone(), roughness: 0.6 })); m.userData.i = i; m.scale.setScalar(r0); scene.add(m); return m; });
+  const labels = DN_X0.map((v, i) => { const s = numSprite(i, v < X0C ? '#8f3a1f' : '#2a2018'); scene.add(s); return s; });
+  const rings = DN_X0.map(v => { const s = ring('#b4502c', 0.95); s.visible = v < X0C; s.scale.setScalar(r0 * 3.1); scene.add(s); return s; });   // anillo: foco
+  const halos = DN_X0.map(() => { const s = ring('#b4502c', 0.3); s.visible = false; scene.add(s); return s; });                                  // halo: en crisis
+  const bubbles = DN_X0.map(() => { const m = new T.Mesh(sphereGeo, new T.MeshBasicMaterial({ color: COLS[0], transparent: true, opacity: 0.07, depthWrite: false })); scene.add(m); return m; });
+  const pairs = [];
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const mat = new T.MeshBasicMaterial({ color: GREY.clone(), transparent: true, opacity: 0, depthWrite: false }), m = new T.Mesh(cylGeo, mat);
+    scene.add(m); pairs.push({ i, j, m, mat, alpha: 0 });
+  }
+  const P = DN_X0.map(() => new T.Vector3()), UP = new T.Vector3(0, 1, 0), d = new T.Vector3(), v3 = new T.Vector3(), tgt = new T.Vector3();
+  const colOf = (part, c) => (part.coms[c].includes(0) ? 0 : 1 + (c - (part.lab[0] < c ? 1 : 0))) % DN_COL.length;
+
+  // partición de consenso y estadísticos sobre A^θ (o W si th es null)
+  const NV = 800, STEP = 200;                    // ventana de 4 000 con paso 1 000
+  const nv = () => st.full ? st.sim.n : Math.min(st.sim.n, NV);
+  const startOf = fr => st.full ? 0 : clamp(Math.round((fr - nv() / 2) / STEP) * STEP, 0, st.sim.n - nv());
+  function analyse(th) {
+    const M = th == null ? st.Wp : adjOf(st.C, 'A', th), part = partition(consensusDN(M, N, st.full ? 50 : 20).lab, N);
+    return { th, M, ...part, ...statsDN(st.C, M, part.lab, N, REF) };
+  }
+  // C, W y el barrido completo de θ para la ventana que empieza en a
+  function windowData(a) {
+    const key = a + ':' + nv();
+    if (!st.cache.has(key)) {
+      st.C = corrC(st.sim, a, nv()); st.Wp = clipW(st.C);
+      st.cache.set(key, { C: st.C, Wp: st.Wp, wPart: analyse(null), sweep: TH_GRID.map(analyse) });
+    }
+    return st.cache.get(key);
+  }
+  function refresh() {
+    const a = startOf(st.fr), key = a + ':' + nv();
+    if (key === st.curKey) return;
+    st.curKey = key;
+    Object.assign(st, windowData(a));
+    st.targets = spring3D(st.Wp, N, st.targets || DN_X0.map((_, i) => [Math.cos(i), Math.sin(i * 1.7) * 0.3, Math.sin(i)]), st.targets ? 70 : 300, 0.45);
+    setTheta();
+  }
+  // simula con los valores de los deslizadores; con ruido la serie es más larga
+  function simulateNow() {
+    const K = +iK.value, sx = +iX.value, sz = +iZ.value, noisy = sx > 0 || sz > 0, T = noisy ? 100000 : 60000;
+    st.sim = simDN({ K, sx, sz, T, seed: st.seed });
+    st.crises = st.sim.crises;
+    st.cache.clear(); st.curKey = ''; st.targets = null; st.tshown = -1;
+    if (st.fr > st.sim.n - 1) st.fr = 0;
+    iT.max = st.sim.n - 1;
+    const sanas = DN_X0.map((v, i) => i).filter(i => DN_X0[i] >= X0C), rec = sanas.filter(i => st.crises[i] > 0).length;
+    $('#th-escnote').innerHTML = `${noisy ? 'Con ruido' : 'Sin ruido'}, ${R`\(T = ${T / 1000}\,000\)`} · ${R`\(K / K_c = ${(K / DN_K.c).toFixed(3)}\)`} · sanas con crisis: ${rec} de ${sanas.length}`;
+    tex($('#th-escnote'));
+    refresh();
+  }
+  function setTheta() {
+    const th = +iTh.value, near = st.sweep.find(r => Math.abs(r.th - th) < 1e-9);
+    st.cur = near || analyse(th);
+    const a = st.cur, w = st.wPart, row = (name, r) => `<tr><th>${name}</th><td>${r.m}</td><td>${r.comp}</td><td>${r.coms.length}</td><td>${fmtQ(r.Q)}</td><td>${r.qr.toFixed(2)}</td><td>${r.contraste.toFixed(2)}</td><td>${r.ari.toFixed(2)}</td></tr>`;
+    $('#th-table').innerHTML = `<thead><tr><th></th><th>aristas</th><th>comp.</th><th>com.</th><th>${R`\(Q\)`}</th><th>${R`\(Q/Q_{\max}\)`}</th><th>contraste</th><th>ARI</th></tr></thead>` +
+      `<tbody>${row(R`\(A^\theta\)`, a)}${row(R`\(W\)`, w)}</tbody>`;
+    tex($('#th-table'));
+    $('#th-ariaw').innerHTML = R`ARI entre las particiones de \(A^\theta\) y de \(W\): ` + `<b>${ariDN(a.lab, w.lab, N).toFixed(2)}</b>`;
+    tex($('#th-ariaw'));
+    comsEl.innerHTML = a.coms.map((c, q) => `<li><span class="sw" style="background:${DN_COL[colOf(a, q)]}"></span>` +
+      `<span class="mem">${c.map(i => `<b class="${DN_X0[i] < X0C ? 'epi' : ''}">${i}</b>`).join('')}</span><span class="st">${c.length === 1 ? 'aislada' : c.length + ' regiones'}</span></li>`).join('');
+    pairs.forEach(p => { p.target = a.M[p.i * N + p.j] > 0 ? 1 : 0; });
+    st.tipKey = ''; st.tshown = -1;
+    drawCorr(); drawSweep();
+  }
+
+  function update(dt) {
+    const a = st.cur, k = reduced ? 1 : Math.min(1, dt * 0.008), single = a.coms.length === 1;
+    for (let i = 0; i < N; i++) {
+      const c = COLS[colOf(a, a.lab[i])], ict = st.sim.s[i][st.fr] === 1, pulse = ict && !reduced ? Math.sin(st.phase * 9 + i) : 0;
+      P[i].lerp(tgt.set(...st.targets[i]).multiplyScalar(SC), k);
+      nodes[i].material.color.lerp(col.copy(c).lerp(CREAMc, ict ? 0.05 : 0.3), k);
+      nodes[i].position.copy(P[i]); nodes[i].scale.setScalar(r0 * (st.hover === i ? 1.3 : 1) * (ict ? 1.2 : 1));
+      rings[i].position.copy(P[i]);
+      halos[i].visible = ict; halos[i].position.copy(P[i]); halos[i].scale.setScalar(r0 * (4.6 + 0.4 * pulse));
+      labels[i].position.copy(P[i]).y += r0 * 2.8;
+    }
+    bubbles.forEach((b, q) => {
+      const com = a.coms[q];
+      b.visible = !!com && com.length > 1 && !single;        // una sola comunidad no necesita burbuja
+      if (!b.visible) return;
+      v3.set(0, 0, 0);
+      for (const i of com) v3.addScaledVector(P[i], 1 / com.length);
+      b.position.copy(v3);
+      b.scale.setScalar(Math.max(...com.map(i => P[i].distanceTo(v3))) + 0.22);
+      b.material.color.copy(COLS[colOf(a, q)]);
+    });
+    for (const p of pairs) {
+      const cv = clamp(st.C[p.i * N + p.j], 0, 1), ghost = st.showW ? 0.16 * cv : 0;
+      p.alpha += ((p.target ? 1 : ghost) - p.alpha) * k;            // las aristas aparecen y se desvanecen al mover θ
+      const hot = st.hover < 0 || st.hover === p.i || st.hover === p.j;
+      p.m.visible = p.alpha > 0.01;
+      if (!p.m.visible) continue;
+      d.subVectors(P[p.j], P[p.i]);
+      const len = d.length(), same = a.lab[p.i] === a.lab[p.j];
+      p.m.position.copy(P[p.i]).addScaledVector(d, 0.5);
+      p.m.quaternion.setFromUnitVectors(UP, d.divideScalar(len || 1));
+      const rad = p.target ? 0.0025 + 0.0065 * cv * cv : 0.0025;   // grosor según la correlación
+      p.m.scale.set(rad, len, rad);
+      p.mat.color.copy(p.target && same ? COLS[colOf(a, a.lab[p.i])] : GREY);
+      p.mat.opacity = Math.min(1, p.alpha) * (p.target ? (same ? 0.22 + 0.6 * cv * cv : 0.5) : 1) * (hot ? 1 : 0.12);
+    }
+  }
+
+  const rrect = (g, x, y, w, h, r) => { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); };
+  // C con signo, ordenada por las comunidades de A^θ; los pares bajo θ quedan tenues
+  function drawCorr() {
+    const { g, w, h } = fit(cc), a = st.cur, th = +iTh.value;
+    const ord = a.coms.flatMap(c => [...c].sort((x, y) => DN_X0[x] - DN_X0[y]));
+    g.clearRect(0, 0, w, h);
+    const size = Math.min(w - 44, h - 26), cell = size / N, ox = (w - size) / 2 + 10, oy = 20, gap = Math.max(1, cell * 0.07);
+    g.font = '12.5px KaTeX_Main, "Times New Roman", serif'; g.textAlign = 'center';
+    ord.forEach((i, r) => {
+      g.globalAlpha = 1; g.fillStyle = DN_X0[i] < X0C ? '#8f3a1f' : C.muted;
+      g.fillText(i, ox + (r + .5) * cell, 13); g.fillText(i, ox - 13, oy + (r + .5) * cell + 4);
+      ord.forEach((j, c) => {
+        if (i === j) return;
+        const v = st.C[i * N + j], edge = v > th, hot = st.hover < 0 || st.hover === i || st.hover === j;
+        g.fillStyle = v >= 0 ? mix([246, 238, 226], ACC, Math.min(1, v)) : mix([246, 238, 226], [74, 104, 128], Math.min(1, -v));
+        g.globalAlpha = (edge ? 1 : 0.2) * (hot ? 1 : 0.4);
+        rrect(g, ox + c * cell + gap / 2, oy + r * cell + gap / 2, cell - gap, cell - gap, cell * 0.18); g.fill();
+      });
+    });
+    g.globalAlpha = 1;
+    let s0 = 0;
+    a.coms.forEach((c, q) => {                      // marco de cada comunidad
+      g.strokeStyle = DN_COL[colOf(a, q)]; g.lineWidth = 2;
+      rrect(g, ox + s0 * cell - 1, oy + s0 * cell - 1, c.length * cell + 2, c.length * cell + 2, cell * 0.22); g.stroke();
+      s0 += c.length;
+    });
+  }
+  // barrido de θ: arriba Q de A^θ contra la de W; abajo, comunidades (barras) y componentes conexas (puntos)
+  function drawSweep() {
+    const { g, w, h } = fit(cb), sw = st.sweep, th = +iTh.value, ml = 36, mr = 10;
+    const X = v => ml + v / 0.95 * (w - ml - mr), colw = (w - ml - mr) / 19;
+    const t1 = 14, b1 = Math.round(h * 0.56), t2 = b1 + 26, b2 = h - 24;
+    g.clearRect(0, 0, w, h);
+    g.font = '13px KaTeX_Main, "Times New Roman", serif';
+    // columna del θ elegido
+    g.fillStyle = rgba([197, 138, 42], .16);
+    rrect(g, X(th) - colw / 2, t1 - 8, colw, b2 - t1 + 14, 6); g.fill();
+    // --- Q
+    const qTop = Math.max(0.08, ...sw.map(r => r.Q), st.wPart.Q) * 1.25, Yq = v => b1 - Math.max(0, v) / qTop * (b1 - t1);
+    g.textAlign = 'right'; g.lineWidth = 1;
+    for (const v of [0, qTop / 2, qTop]) {
+      g.strokeStyle = C.grid; g.beginPath(); g.moveTo(ml, Yq(v)); g.lineTo(w - mr, Yq(v)); g.stroke();
+      g.fillStyle = C.muted; g.fillText(v.toFixed(2), ml - 6, Yq(v) + 4);
+    }
+    g.beginPath(); g.moveTo(X(0), Yq(0));
+    sw.forEach(r => g.lineTo(X(r.th), Yq(r.Q)));
+    g.lineTo(X(0.95), Yq(0)); g.closePath(); g.fillStyle = rgba(ACC, .12); g.fill();
+    g.beginPath(); sw.forEach((r, q) => q ? g.lineTo(X(r.th), Yq(r.Q)) : g.moveTo(X(r.th), Yq(r.Q)));
+    stroke(g, C.accent, 2.2);
+    g.beginPath(); g.moveTo(ml, Yq(st.wPart.Q)); g.lineTo(w - mr, Yq(st.wPart.Q)); stroke(g, rgba([42, 32, 24], .55), 1.2, [4, 4]);
+    dot(g, X(th), Yq(st.cur.Q), 4.5, C.accent, C.plate);
+    const right = X(th) > w * 0.7;
+    g.fillStyle = C.ink; g.textAlign = right ? 'right' : 'left';
+    g.fillText('Q = ' + fmtQ(st.cur.Q), X(th) + (right ? -10 : 10), Math.max(t1 + 4, Yq(st.cur.Q) - 8));
+    // --- comunidades y componentes
+    const nTop = Math.max(4, ...sw.map(r => r.coms.length)), Yn = v => b2 - v / nTop * (b2 - t2);
+    g.strokeStyle = C.grid; g.beginPath(); g.moveTo(ml, b2); g.lineTo(w - mr, b2); g.stroke();
+    g.textAlign = 'center';
+    sw.forEach(r => {
+      const sel = Math.abs(r.th - th) < 1e-9, bw = Math.max(4, colw * 0.56);
+      g.fillStyle = sel ? C.sage : rgba(SAGE, .45);
+      rrect(g, X(r.th) - bw / 2, Yn(r.coms.length), bw, b2 - Yn(r.coms.length), 3); g.fill();
+      if (sel || colw > 22) { g.fillStyle = sel ? C.ink : C.muted; g.fillText(r.coms.length, X(r.th), Yn(r.coms.length) - 4); }
+      dot(g, X(r.th), Yn(r.comp), sel ? 3.5 : 2.5, C.ink, C.plate);
+    });
+    g.fillStyle = C.muted;
+    for (const v of [0, 0.2, 0.4, 0.6, 0.8]) g.fillText(v, X(v), h - 6);
+    g.save(); g.font = MATHFONT; g.textAlign = 'right'; g.fillText('θ', w - mr, h - 6); g.restore();
+  }
+  function drawTs() {
+    const s = st.sim, { g, w, h } = fit(ct), { X, Y, m } = frame(g, w, h, [0, s.T], [-2.2, 1.6]), a = startOf(st.fr), b = a + nv() - 1;
+    g.fillStyle = rgba([197, 138, 42], .16);
+    g.fillRect(X(s.t[a]), m.t, X(s.t[b]) - X(s.t[a]), h - m.t - m.b);
+    g.strokeStyle = rgba([42, 32, 24], .3); g.setLineDash([3, 4]); g.beginPath(); g.moveTo(m.l, Y(-0.5)); g.lineTo(w - 10, Y(-0.5)); g.stroke(); g.setLineDash([]);
+    const stepK = Math.max(1, Math.floor(s.n / (w * 1.5)));
+    for (let i = N - 1; i >= 0; i--) {
+      const epi = DN_X0[i] < X0C, on = st.hover < 0 || st.hover === i;
+      g.beginPath();
+      for (let k = 0; k < s.n; k += stepK) { const px = X(s.t[k]), py = Y(s.x[i][k]); k ? g.lineTo(px, py) : g.moveTo(px, py); }
+      stroke(g, rgba(epi ? ACC : SAGE, on ? (epi ? 1 : .55) : .1), epi || st.hover === i ? 1.6 : 1);
+    }
+    const px = X(s.t[st.fr]);
+    g.strokeStyle = C.ink; g.lineWidth = 1.5; g.beginPath(); g.moveTo(px, m.t); g.lineTo(px, h - m.b); g.stroke();
+  }
+  function draw(now = performance.now()) {
+    if (!st.sim) return;
+    refresh();
+    if (st.tshown !== st.fr) {
+      st.tshown = st.fr;
+      drawTs();
+      iT.value = st.fr; iT.style.setProperty('--fill', st.fr / (st.sim.n - 1) * 100 + '%');
+      const o = $('#th-tout'), a = startOf(st.fr), txt = `t \\in [${Math.round(st.sim.t[a])},\\ ${Math.round(st.sim.t[a + nv() - 1])}]`;
+      if (window.katex) katex.render(txt, o, { throwOnError: false }); else o.textContent = txt;
+    }
+    update(now - (draw.last || now - 16)); draw.last = now;
+    const cp = Math.cos(st.pitch), dist = st.dist * st.fit;
+    camera.position.set(dist * cp * Math.sin(st.yaw), dist * Math.sin(st.pitch), dist * cp * Math.cos(st.yaw));
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    if (st.hover >= 0) showTip();
+  }
+  function showTip() {
+    const i = st.hover, a = st.cur, key = i + ':' + iTh.value;
+    if (key !== st.tipKey) {
+      st.tipKey = key;
+      const deg = [...Array(N).keys()].filter(j => a.M[i * N + j] > 0).length;
+      tip.innerHTML = `nodo ${i} · ${DN_X0[i] < X0C ? 'foco' : 'sana'} · ${R`\(x_0 = ${DN_X0[i].toFixed(3)}\)`}<br>` +
+        `grado en ${R`\(A^\theta\)`}: ${deg} · ${st.crises[i]} crisis<br>comunidad de ${a.coms[a.lab[i]].length} ${a.coms[a.lab[i]].length === 1 ? 'región' : 'regiones'}`;
+      tex(tip);
+    }
+    v3.copy(P[i]).project(camera);
+    tip.style.left = clamp((v3.x + 1) / 2 * stage.clientWidth + 14, 0, Math.max(0, stage.clientWidth - 250)) + 'px';
+    tip.style.top = ((1 - v3.y) / 2 * stage.clientHeight + 16) + 'px';
+  }
+
+  // ---- interacción
+  const ray = new T.Raycaster(), ndc = new T.Vector2();
+  let lx = 0, ly = 0;
+  canvas.addEventListener('pointerdown', e => { st.drag = true; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+  canvas.addEventListener('pointermove', e => {
+    if (st.drag) {
+      st.yaw -= (e.clientX - lx) * 0.009; st.pitch = clamp(st.pitch + (e.clientY - ly) * 0.007, -1.2, 1.35);
+      lx = e.clientX; ly = e.clientY;
+    } else if (st.cur) {
+      const b = canvas.getBoundingClientRect();
+      ndc.set((e.clientX - b.left) / b.width * 2 - 1, 1 - (e.clientY - b.top) / b.height * 2);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(nodes)[0], hv = hit ? hit.object.userData.i : -1;
+      if (hv !== st.hover) { st.hover = hv; st.tshown = -1; drawCorr(); }
+      tip.classList.toggle('on', st.hover >= 0);
+      canvas.style.cursor = st.hover >= 0 ? 'pointer' : 'grab';
+    }
+    draw();
+  });
+  const release = () => { st.drag = false; canvas.style.cursor = 'grab'; };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('pointerleave', () => { if (!st.drag && st.hover >= 0) { st.hover = -1; st.tshown = -1; tip.classList.remove('on'); drawCorr(); draw(); } });
+  $('#th-zin').onclick = () => { st.dist = clamp(st.dist * 0.85, 2.6, 9); draw(); };
+  $('#th-zout').onclick = () => { st.dist = clamp(st.dist / 0.85, 2.6, 9); draw(); };
+  $('#th-reset').onclick = () => { Object.assign(st, VIEW); draw(); };
+  // clic o arrastre en el barrido mueve θ
+  const seekTh = e => { const r = cb.getBoundingClientRect(); iTh.value = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * 0.95 / 0.05) * 0.05; upTh(); setTheta(); };
+  cb.addEventListener('pointerdown', e => { seekTh(e); cb.setPointerCapture(e.pointerId); cb.onpointermove = seekTh; });
+  cb.addEventListener('pointerup', () => { cb.onpointermove = null; });
+
+  const upTh = bindRange(iTh, $('#th-tho'), 2, setTheta);
+  let simTimer;
+  const rebuild = () => { busy.classList.add('on'); clearTimeout(simTimer); simTimer = setTimeout(() => { simulateNow(); busy.classList.remove('on'); draw(); }, 160); };
+  const markScen = () => $$('#th-esc .btn').forEach(b => {
+    const q = SCEN.find(c => c.id === b._v);
+    b.setAttribute('aria-pressed', String(Math.abs(q.K - +iK.value) < 1e-9 && Math.abs(q.sx - +iX.value) < 1e-9 && Math.abs(q.sz - +iZ.value) < 1e-9));
+  });
+  const upK = bindRange(iK, $('#th-ko'), 3, () => { markScen(); rebuild(); });
+  const upX = bindRange(iX, $('#th-sxo'), 3, () => { markScen(); rebuild(); });
+  const upZ = bindRange(iZ, $('#th-szo'), 5, () => { markScen(); rebuild(); });
+  presetButtons($('#th-esc'), SCEN.map(c => ({ v: c.id, label: c.label })), v => {
+    const c = SCEN.find(q => q.id === v);
+    iK.value = c.K; iX.value = c.sx; iZ.value = c.sz; st.seed = c.seed;
+    upK(); upX(); upZ(); markScen(); rebuild();
+  });
+  $('#th-new').onclick = () => { st.seed++; rebuild(); };
+  tex($('#th-esc'));
+  $('#th-ghost').onclick = e => { st.showW = !st.showW; e.currentTarget.setAttribute('aria-pressed', String(st.showW)); };
+  $('#th-spin').onclick = e => { st.spin = !st.spin; e.currentTarget.setAttribute('aria-pressed', String(st.spin)); };
+  $('#th-spin').setAttribute('aria-pressed', String(st.spin));
+  const setPlay = v => { st.playing = v; $('#th-play').classList.toggle('is-playing', v); };
+  $('#th-play').onclick = () => setPlay(!st.playing);
+  iT.addEventListener('input', () => { st.fr = +iT.value; setPlay(false); draw(); });
+  const seek = e => { const r = ct.getBoundingClientRect(); st.fr = Math.round(clamp((e.clientX - r.left - 36) / (r.width - 46), 0, 1) * (st.sim.n - 1)); setPlay(false); draw(); };
+  ct.addEventListener('pointerdown', e => { seek(e); ct.setPointerCapture(e.pointerId); ct.onpointermove = seek; });
+  ct.addEventListener('pointerup', () => { ct.onpointermove = null; });
+  $$('#th-win button').forEach(b => b.onclick = () => {
+    $$('#th-win button').forEach(o => o.setAttribute('aria-pressed', String(o === b)));
+    st.full = b.dataset.v === 'full'; st.curKey = ''; st.tshown = -1;
+    busy.classList.add('on');
+    setTimeout(() => { draw(); busy.classList.remove('on'); }, 60);
+  });
+
+  const size = () => {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    st.fit = Math.max(1, 1.3 / camera.aspect);
+    if (st.cur) { drawCorr(); drawSweep(); st.tshown = -1; }
+    draw();
+  };
+  let acc = 0;
+  const loop = now => {
+    requestAnimationFrame(loop);
+    if (!st.vis || document.hidden || !st.cur) { draw.last = now; return; }
+    const dt = Math.min(60, now - (draw.last || now));
+    st.phase += dt / 1000;
+    if (st.playing && !st.full) { acc += dt / 1000 * st.sim.n / 60; if (acc >= 1) { st.fr = (st.fr + Math.floor(acc)) % st.sim.n; acc %= 1; } }   // 60 s por recorrido
+    if (st.spin && !st.drag) st.yaw += dt / 1000 * 0.1;
+    draw(now);
+  };
+  watchVisible($('#labth'), v => { st.vis = v; });
+  markScen();
+  setPlay(st.playing);
+  simulateNow();
+  size();
+  requestAnimationFrame(loop);
+  return size;
+}
+
 /* ================= láminas de figuras ================= */
 // tamaño en píxeles de cada figura: reserva su espacio antes de que cargue, para que la página no salte
-const FIG_DIM = {"DN_grafo":[1700,708],"DN_W_sub":[1200,1000],"DN_W_sup":[1200,1000],"DN_W_ruido":[1200,1000],"DN_tiempo_sin":[1700,1569],"DN_tiempo_con":[1700,1569],"DN_series_ruido":[1700,915],"DN_resumen":[1699,546],"CL_sub":[1700,316],"CL_sup":[1700,316],"CL_ruido":[1700,316],"CL_sin_antes":[1700,948],"CL_sin_durante":[1700,948],"CL_sin_despues":[1700,948],"CL_cascada_ruido":[1700,1569],"CL_rui_antes":[1700,948],"CL_rui_durante":[1700,948],"CL_rui_despues":[1700,948],"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
+const FIG_DIM = {"TH_AW_sub":[1700,554],"TH_AW_sup":[1700,554],"TH_AW_ruido":[1700,554],"TH_barrido":[1699,1012],"TH_tiempo_sin":[1700,1696],"TH_tiempo_con":[1700,1674],"TH_realizaciones":[1699,475],"TH_reclutamiento":[1699,513],"DN_grafo":[1700,708],"DN_W_sub":[1200,1000],"DN_W_sup":[1200,1000],"DN_W_ruido":[1200,1000],"DN_tiempo_sin":[1700,1569],"DN_tiempo_con":[1700,1569],"DN_series_ruido":[1700,915],"DN_resumen":[1699,546],"CL_sub":[1700,316],"CL_sup":[1700,316],"CL_ruido":[1700,316],"CL_sin_antes":[1700,948],"CL_sin_durante":[1700,948],"CL_sin_despues":[1700,948],"CL_cascada_ruido":[1700,1569],"CL_rui_antes":[1700,948],"CL_rui_durante":[1700,948],"CL_rui_despues":[1700,948],"G3_48_0":[702,690],"G3_50_0":[671,690],"G3_50_1":[671,690],"G3_50_2":[671,690],"G3_52_0":[797,790],"G_11_0":[989,690],"G_22_0":[1189,490],"G_22_1":[1189,490],"G_22_2":[1189,490],"G_22_3":[1189,490],"G_25_0":[989,490],"G_29_0":[1202,590],"G_32_0":[671,590],"G_34_0":[1790,495],"G_37_0":[690,490],"G_37_1":[690,490],"G_45_1":[690,490],"P_12_0":[554,455],"P_18_0":[1987,590],"P_19_0":[1989,440],"P_21_0":[1498,1769],"P_23_0":[717,474],"P_24_0":[726,474],"P_25_0":[695,474],"P_26_0":[780,551],"P_36_0":[1589,1651],"P_38_0":[1589,1651],"P_40_0":[1603,1651],"P_46_0":[1590,1110],"P_46_1":[1590,1110],"P_46_2":[1590,1110],"P_48_0":[1589,1150],"P_48_1":[1589,1150],"P_48_2":[1590,1150],"P_50_0":[1289,590],"P_50_1":[1289,590],"P_50_2":[1289,590],"P_51_0":[1289,590],"P_51_1":[1289,590],"P_54_0":[1289,889],"P_54_1":[1289,889],"P_54_2":[1289,889],"P_54_3":[1289,889],"P_54_4":[1289,890],"P_56_0":[1362,760],"P_59_0":[890,409],"P_60_0":[570,409],"P_61_0":[1073,409],"P_64_0":[1303,1030],"P_65_0":[614,434],"P_67_1":[1489,440],"P_67_2":[1489,440],"P_69_0":[690,409],"P_70_1":[1389,440],"P_9_0":[556,457]};
 const F = (id, label, cap) => ({ src: `assets/fig/${id}.png`, label, cap, w: FIG_DIM[id][0], h: FIG_DIM[id][1] });
 const PLATES = {
   n1: [
@@ -2505,6 +2905,18 @@ const PLATES = {
       F('G3_50_1', R`\(t = 0.5\,T\)`, R`El mismo grafo a mitad de la simulación.`),
       F('G3_50_2', R`\(t = 0.9\,T\)`, R`El mismo grafo al \(90\,\%\) de la simulación.`)] },
     { t: 'Grafo estructural 3D', figs: [F('G3_48_0', '', R`Grafo \(A\) con la disposición en el plano y la excitabilidad \(x_{0,i}\) como altura. En rojo los nodos con \(x_0 \lt 2.91\).`)] },
+  ],
+  umbral: [
+    { t: 'A contra W', wide: true, figs: [
+      F('TH_AW_sub', R`\(K_{\rm sub}\)`, R`\(C_{ij}\) con signo y las comunidades de consenso sobre \(A^\theta\) \((\theta = 0.5)\) y sobre \(W\), con \(K_{\rm sub}\): las dos dan \(\{0,1\}\) y \(\{2,\dots,9\}\).`),
+      F('TH_AW_sup', R`\(K_{\rm sup}\)`, R`Con \(K_{\rm sup}\): \(A^\theta\) da \(\{0,1\}\), \(\{2,7\}\) y el resto \((Q = 0.095)\); \(W\) da \(\{0,1,7\}\) y el resto \((Q = 0.057)\).`),
+      F('TH_AW_ruido', R`\(K_{\rm ruido}\)`, R`Con ruido: \(A^\theta\) aísla a la región 7 en una tercera componente; \(W\) la deja con las sanas.`)] },
+    { t: 'Barrido del umbral', wide: true, figs: [F('TH_barrido', '', R`Aristas, componentes conexas, comunidades, \(Q\), \(Q/Q_{\max}\) y ARI en función de \(\theta \in [0,\ 0.95]\) para las tres simulaciones. La línea punteada marca \(\theta = 0.5\).`)] },
+    { t: 'Estadísticos en el tiempo', wide: true, figs: [
+      F('TH_tiempo_sin', 'Sin ruido', R`\(K_{\rm sup}\), ventanas de \(4\,000\) con paso \(1\,000\): todas las series tienen periodo \(16\,000\), el intervalo entre cascadas.`),
+      F('TH_tiempo_con', 'Con ruido', R`\(K_{\rm ruido}\), \(T = 300\,000\): sin periodicidad (autocorrelación \(\le 0.3\)).`)] },
+    { t: 'Realizaciones', wide: true, figs: [F('TH_realizaciones', '', R`\(Q\), \(Q/Q_{\max}\) y contraste en \(20\) realizaciones con \(K = 0\) y \(20\) con \(K_{\rm ruido}\), para \(A^\theta\) (azul) y \(W\) (rojo).`)] },
+    { t: 'Probabilidad de cascada', wide: true, figs: [F('TH_reclutamiento', '', R`\(200\) realizaciones con \(K_{\rm ruido}\): regiones sanas reclutadas por realización y probabilidad de que cada sana tenga alguna crisis contra \(x_0\).`)] },
   ],
   clusters: [
     { t: 'Clusters por método', wide: true, figs: [
@@ -2639,7 +3051,7 @@ function motion(m) {
 /* ================= arranque ================= */
 function boot() {
   background(); plates(); nav();
-  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d(), labDN(), labCL()];
+  const redraws = [brain3d(), hero(), lab1(), lab2(), labH(), labNoise(), lab3(), lab3d(), labDN(), labCL(), labTH()];
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => redraws.forEach(f => f()), 120); });
   tex(document.body);
